@@ -30,7 +30,7 @@ Cloudflare Worker 的「Variables and Secrets」面板里，**Variable** 是明�
 
 ## 2. 新部署：正确流程
 
-1. Fork `wusaki0723/Aelios`，clone 到本地。
+1. Fork `Aelios-project/Aelios`，clone 到本地。
 2. 在 Cloudflare Dashboard 创建 Worker（或先空着，`deploy:cloudflare` 会自动建）。
 3. **Worker → Settings → Variables and Secrets**，点 `Add`：
    - 类型选 **Secret**（红框警告：不要选成 Variable！），加入你需要的密钥：
@@ -54,7 +54,7 @@ Cloudflare Worker 的「Variables and Secrets」面板里，**Variable** 是明�
 ### 第 0 步：先升级 Aelios 到修过的版本
 
 ```bash
-git remote add upstream https://github.com/wusaki0723/Aelios
+git remote add upstream https://github.com/Aelios-project/Aelios
 git fetch upstream
 git checkout main
 git merge upstream/main       # 或 git rebase upstream/main

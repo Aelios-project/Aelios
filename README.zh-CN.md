@@ -11,7 +11,7 @@
 用 Claude Code、Codex 这类能跑命令的 AI，把这段话发给它：
 
 ```text
-帮我装好、配好 Aelios（我的 AI 记忆网关）。先读 https://raw.githubusercontent.com/wusaki0723/Aelios/main/docs/setup-with-ai.md ，照着做。需要我在浏览器里点、或者需要我自己填 key 的时候，停下来告诉我去哪儿填。
+帮我装好、配好 Aelios（我的 AI 记忆网关）。先读 https://raw.githubusercontent.com/Aelios-project/Aelios/main/docs/setup-with-ai.md ，照着做。需要我在浏览器里点、或者需要我自己填 key 的时候，停下来告诉我去哪儿填。
 ```
 
 从零开始也行：它会帮你 fork、部署、生成 Cloudflare 令牌、配好助手、导入以前的记忆，最后交给你一个地址、一把 API Key 和要选的模型名，填进聊天软件就能用。你要准备一个 Cloudflare 账号（免费）和一个模型的 key；自己动手的只有在浏览器里点「允许」（新装两次），和把模型的 key 存进 Cloudflare 后台（它会告诉你去哪儿填）。
@@ -40,7 +40,7 @@ https://companion-memory-proxy.<你的子域>.workers.dev
 
 不要用裸 `wrangler deploy`，那样不会建库。
 
-**不推荐：一键部署按钮。** [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/wusaki0723/Aelios)
+**不推荐：一键部署按钮。** [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Aelios-project/Aelios)
 
 按钮能用，但 Cloudflare 是把本仓库复制一份到你账号里的新仓库，不是 Fork。复制品在 GitHub 上没有 Sync fork，以后每次更新都得手动把新代码拉过去。实在要用的话：表单里只必填 `CHATBOX_API_KEY`；Vectorize 那栏照抄 Dimensions `1024`、Metric `cosine`；构建命令 `npm ci`，部署命令 `npm run deploy`。已经用按钮装好了？看[用按钮装的怎么办](#用按钮装的怎么办)。
 
@@ -210,7 +210,7 @@ https://<Worker 地址>/mcp?token=<CHATBOX_API_KEY>
 
 导盲犬只转述图片，不写记忆。
 
-**住在 Cloudflare 里的伴侣：[Aelios-resident](https://github.com/wusaki0723/Aelios-resident)**
+**住在 Cloudflare 里的伴侣：[Aelios-resident](https://github.com/Aelios-project/Aelios-resident)**
 
 另一个 Worker（一个 Durable Object，基于 Cloudflare 的 Think），在 Telegram 和它自己的网页上跟你聊，两边是同一段对话。接上 Aelios 后，它的聊天跟别的客户端一样从你助手的 `/v1` 过，想起旧事、记下来都由 Aelios 做；它还会用记忆工具，搜网搜到的长期知识存进世界知识。另外：你停下来一阵，它给之后的自己写交接信；到点主动找你；搜网、读网页；接别的 MCP；模型、人设和设置都在它的网页上改。Workers 免费档就能跑。接法是在它的设置页填这个 Aelios 的地址、key 和用哪个助手聊（选的模型要在那个助手的主模型里），部署看它的 README。
 

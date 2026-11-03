@@ -53,7 +53,7 @@ Out of scope:
 
 ## Past security fixes
 
-- **June 2026, [#7](https://github.com/wusaki0723/Aelios/issues/7) → [#9](https://github.com/wusaki0723/Aelios/pull/9)**: the setup script wrote secrets such as `CHATBOX_API_KEY` and `CLOUDFLARE_API_TOKEN` into the git-tracked `wrangler.toml`. Fixed two days after the report. [SECRETS.md](SECRETS.md) walks affected forks through rotating the keys first and cleaning git history second.
+- **June 2026, [#7](https://github.com/Aelios-project/Aelios/issues/7) → [#9](https://github.com/Aelios-project/Aelios/pull/9)**: the setup script wrote secrets such as `CHATBOX_API_KEY` and `CLOUDFLARE_API_TOKEN` into the git-tracked `wrangler.toml`. Fixed two days after the report. [SECRETS.md](SECRETS.md) walks affected forks through rotating the keys first and cleaning git history second.
 
 ## Running your own Aelios safely
 

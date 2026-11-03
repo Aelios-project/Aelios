@@ -17,7 +17,7 @@ your client  →  Aelios (identify, remember, recall)  →  the model
 With an AI that can run commands (Claude Code, Codex and the like), send it this:
 
 ```text
-Install and set up Aelios (my AI memory gateway) for me. Read https://raw.githubusercontent.com/wusaki0723/Aelios/main/docs/setup-with-ai.md first and follow it. When I need to click something in the browser or enter a key myself, stop and tell me where.
+Install and set up Aelios (my AI memory gateway) for me. Read https://raw.githubusercontent.com/Aelios-project/Aelios/main/docs/setup-with-ai.md first and follow it. When I need to click something in the browser or enter a key myself, stop and tell me where.
 ```
 
 It works from scratch: it forks and deploys Aelios, creates the Cloudflare token, configures the assistant and imports your old memories. At the end it hands you a base URL, an API key and the model name to pick, ready for your chat app. You need a Cloudflare account (the free plan is enough) and a key for your model. All you do yourself is click "Allow" in the browser (twice for a new install) and store the model key in the Cloudflare dashboard (it tells you where). The guide is written in Chinese; the AI will talk to you in your language.
@@ -44,7 +44,7 @@ https://companion-memory-proxy.<your-subdomain>.workers.dev
 
 Don't run a bare `wrangler deploy` — it won't create the databases.
 
-**Not recommended: the one-click button.** [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/wusaki0723/Aelios)
+**Not recommended: the one-click button.** [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Aelios-project/Aelios)
 
 It works, but Cloudflare copies this repo into a new repository in your account instead of forking it. GitHub has no Sync fork for a copy, so every update has to be pulled in by hand. If you use it anyway: the only required field is `CHATBOX_API_KEY`; for the Vectorize index use Dimensions `1024`, Metric `cosine`; build command `npm ci`, deploy command `npm run deploy`. Already deployed this way? See [Deployed with the button](#deployed-with-the-button).
 
@@ -203,7 +203,7 @@ If you only have a Claude subscription and cannot use API mode, get automatic pe
 
 **Seeing images (guide-dog)**: add the `GUIDE_DOG_API_KEY` secret, then point your client at `https://<Worker address>/v1/guide-dog` with model `companion`. The guide-dog only describes images — it writes no memory.
 
-**A companion that lives on Cloudflare: [Aelios-resident](https://github.com/wusaki0723/Aelios-resident)** — a separate Worker (one Durable Object, built on Cloudflare's Think) that you talk to on Telegram and on its own web page, both one conversation. With Aelios connected, its chat goes through your assistant's `/v1` endpoint like any other client, so Aelios does the recalling and the remembering; it also uses the memory tools, and what lasts from its web searches is saved as world knowledge. On top of that it writes itself a handoff letter when you go quiet, checks in on a schedule, searches and reads the web, connects other MCP servers, and lets you change the model, persona and settings on its web page. It runs on the Workers Free plan. To connect it, fill in this Aelios's address, a key and the assistant to chat as on its settings page (the model you pick has to be one of that assistant's primary models); deployment is in its README.
+**A companion that lives on Cloudflare: [Aelios-resident](https://github.com/Aelios-project/Aelios-resident)** — a separate Worker (one Durable Object, built on Cloudflare's Think) that you talk to on Telegram and on its own web page, both one conversation. With Aelios connected, its chat goes through your assistant's `/v1` endpoint like any other client, so Aelios does the recalling and the remembering; it also uses the memory tools, and what lasts from its web searches is saved as world knowledge. On top of that it writes itself a handoff letter when you go quiet, checks in on a schedule, searches and reads the web, connects other MCP servers, and lets you change the model, persona and settings on its web page. It runs on the Workers Free plan. To connect it, fill in this Aelios's address, a key and the assistant to chat as on its settings page (the model you pick has to be one of that assistant's primary models); deployment is in its README.
 
 ## Common pitfalls
 

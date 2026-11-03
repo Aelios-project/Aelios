@@ -3,7 +3,7 @@
 这份说明是写给 AI 看的。你用 Claude Code、Codex、Cursor 这类能跑命令的 AI，把下面这段话发给它就行：
 
 ```text
-帮我装好、配好 Aelios（我的 AI 记忆网关）。先读 https://raw.githubusercontent.com/wusaki0723/Aelios/main/docs/setup-with-ai.md ，照着做。需要我在浏览器里点、或者需要我自己填 key 的时候，停下来告诉我去哪儿填。
+帮我装好、配好 Aelios（我的 AI 记忆网关）。先读 https://raw.githubusercontent.com/Aelios-project/Aelios/main/docs/setup-with-ai.md ，照着做。需要我在浏览器里点、或者需要我自己填 key 的时候，停下来告诉我去哪儿填。
 ```
 
 从零开始也行，已经装过的也行。配完你会拿到三样东西，填进你平时用的聊天软件就能用：
@@ -74,12 +74,12 @@ cf auth login
 ## 2. 部署（没装过才做）
 
 ```bash
-gh repo fork wusaki0723/Aelios --clone --default-branch-only
+gh repo fork Aelios-project/Aelios --clone --default-branch-only
 cd Aelios
 npm ci
 ```
 
-没有 gh：请用户打开 <https://github.com/wusaki0723/Aelios> 点右上角 **Fork**，把 fork 的地址告诉你，你再 `git clone` 那个地址、`npm ci`。用户没有 GitHub 账号就直接 `git clone https://github.com/wusaki0723/Aelios`，只是以后更新要手动拉。
+没有 gh：请用户打开 <https://github.com/Aelios-project/Aelios> 点右上角 **Fork**，把 fork 的地址告诉你，你再 `git clone` 那个地址、`npm ci`。用户没有 GitHub 账号就直接 `git clone https://github.com/Aelios-project/Aelios`，只是以后更新要手动拉。
 
 部署用 wrangler，它的登录跟 `cf` 是分开的，要用户再点一次允许：
 
