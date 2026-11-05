@@ -810,6 +810,27 @@ test("no gateway named anywhere: REST leaves it to CF, URL surfaces use the acco
   assert.equal(resolveUpstream({ AI_GATEWAY_ID: "panel-gw" } as any, pasted).gatewayId, "pasted-gw");
 });
 
+test("custom providers stay on the gateway URL (REST has none of them), whatever the gateway setting", async () => {
+  const acct = "c".repeat(32);
+  for (const [gatewaySetting, inPath] of [[undefined, "default"], ["", "default"], ["her-gateway", "her-gateway"]]) {
+    const resolved = resolveUpstream({ AI_GATEWAY_ID: gatewaySetting } as any, { version: 3, upstream: { address: acct }, identities: [] });
+    const gw = `https://gateway.ai.cloudflare.com/v1/${acct}/${inPath}`;
+    assert.deepEqual(routeFor(resolved, "chat", "custom-kc/kimi-for-coding"),
+      { url: `${gw}/compat/chat/completions`, model: "custom-kc/kimi-for-coding", auth: "bearer" });
+    assert.deepEqual(routeFor(resolved, "messages", "custom-saki/claude-opus-5-5"),
+      { url: `${gw}/custom-saki/messages`, model: "claude-opus-5-5", auth: "cf-aig" });
+    assert.deepEqual(routeFor(resolved, "responses", "custom-nous/hermes-5"),
+      { url: `${gw}/custom-nous/responses`, model: "hermes-5", auth: "cf-aig" });
+  }
+  setConfig({ ...config(), upstream: { address: acct } });
+  env.AI_GATEWAY_ID = "her-gateway";
+  await run("/v1/messages", { model: "custom-saki/claude-opus-5-5", max_tokens: 16, messages: [{ role: "user", content: "Hi" }] });
+  assert.equal(calls[0].url, `https://gateway.ai.cloudflare.com/v1/${acct}/her-gateway/custom-saki/messages`);
+  assert.equal(calls[0].headers["cf-aig-authorization"], "Bearer cf-token");
+  assert.equal(calls[0].headers.authorization, undefined);
+  assert.equal(calls[0].headers["cf-aig-gateway-id"], undefined);
+});
+
 test("Claude ids go to REST in Cloudflare's catalog spelling", () => {
   assert.equal(catalogClaude("claude-opus-5-5"), "claude-opus-5.5");
   assert.equal(catalogClaude("claude-haiku-4-5-20251001"), "claude-haiku-4.5-20251001");
