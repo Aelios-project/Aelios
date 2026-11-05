@@ -172,13 +172,16 @@ export function nativeAnthropic(route: UpstreamRoute): boolean {
 /**
  * Whether the REST API turned the call down for a reason the provider endpoint does not have, so the same
  * request should go there instead: a model the catalog does not know (404 "Model not found"; or 400 "No such model",
- * in Anthropic's error shape on /messages and as CF's code 5007 elsewhere), or a token without the Workers AI Read
- * permission REST needs (401, CF code 10000). Answers from the model itself, including its own 403s, are not retried.
+ * in Anthropic's error shape on /messages and as CF's code 5007 elsewhere), a token without the Workers AI Read
+ * permission REST needs (401, CF code 10000), or REST's Unified Billing refusing the provider for this account
+ * ("Unified billing is temporarily unavailable for this provider", seen 2026-11-05 on an account whose calls through
+ * the provider endpoint go through). Answers from the model itself, including its own 403s, are not retried.
  */
-export function restRefused(status: number, text: string): "model" | "token" | null {
+export function restRefused(status: number, text: string): "model" | "token" | "billing" | null {
   if (status === 404 && /Model not found/i.test(text)) return "model";
   if (status === 400 && (/"code"\s*:\s*5007\b/.test(text) || /No such model/i.test(text))) return "model";
   if (status === 401 && /"code"\s*:\s*10000\b/.test(text)) return "token";
+  if (status >= 400 && /Unified billing is (temporarily )?unavailable/i.test(text)) return "billing";
   return null;
 }
 

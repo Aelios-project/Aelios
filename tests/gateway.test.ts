@@ -873,6 +873,28 @@ test("what REST alone refuses goes to the provider endpoint; the model's own ans
   assert.equal(restRefused(403, '{"error":{"type":"forbidden","message":"Request not allowed"}}'), null);
   assert.equal(restRefused(400, '{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: too large"}}'), null);
   assert.equal(restRefused(429, '{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}'), null);
+  // An account whose Unified Billing REST refuses Claude, while the provider endpoint takes it (2026-11-05).
+  const billing = '{"state":"Failed","error":"Unified billing is temporarily unavailable for this provider; retry, or configure your own provider API key (BYOK)."}';
+  for (const status of [400, 402, 403, 503]) assert.equal(restRefused(status, billing), "billing", String(status));
+});
+
+test("REST refusing Unified Billing for the account sends Claude to the provider endpoint", async () => {
+  setConfig({ ...config(), upstream: { address: "c".repeat(32) } });
+  env.AI_GATEWAY_ID = "her-gateway";
+  const mock = globalThis.fetch;
+  globalThis.fetch = async (url: any, init: any) => {
+    if (String(url).startsWith("https://api.cloudflare.com/")) {
+      calls.push({ url: String(url), headers: Object.fromEntries(new Headers(init.headers)), query: JSON.parse(init.body) });
+      return Response.json({ state: "Failed", error: "Unified billing is temporarily unavailable for this provider; retry, or configure your own provider API key (BYOK)." }, { status: 503 });
+    }
+    return mock(url, init);
+  };
+  const { response } = await run("/v1/messages", { model: "anthropic/claude-opus-5.5", max_tokens: 16, messages: [{ role: "user", content: "Hi" }] });
+  assert.equal(response.status, 200);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].url, `https://gateway.ai.cloudflare.com/v1/${"c".repeat(32)}/her-gateway/anthropic/v1/messages`);
+  assert.equal(calls[1].query.model, "claude-opus-5-5");
+  assert.equal(calls[1].headers["cf-aig-authorization"], "Bearer cf-token");
 });
 
 test("a model REST does not know is sent to the provider endpoint, and skips REST from then on", async () => {
