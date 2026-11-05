@@ -111,9 +111,17 @@ test('every internal env var carries a reason', () => {
   assert.deepEqual(undocumented, [], 'INTERNAL entries need a reason');
 });
 
+/**
+ * Settings that the deploy reads, not the running Worker: `npm run deploy` (scripts/setup-cloudflare.mjs) takes
+ * them out of the saved config and writes them into that deploy's wrangler.toml.
+ */
+const DEPLOY_TIME = ['PLACEMENT_REGION'];
+
 test('every settings entry is read by the code', () => {
   const reads = envReads();
-  const dead = SETTINGS.map((spec) => spec.name).filter((name) => !reads.has(name));
+  const deployScript = readFileSync(join(ROOT, 'scripts', 'setup-cloudflare.mjs'), 'utf8');
+  const readAtDeploy = (name: string) => DEPLOY_TIME.includes(name) && new RegExp(`settings\\?\\.${name}\\b`).test(deployScript);
+  const dead = SETTINGS.map((spec) => spec.name).filter((name) => !reads.has(name) && !readAtDeploy(name));
   assert.deepEqual(dead, [],
     'a setting nothing reads is a dead knob: the source would not show why saving it changed nothing');
 });

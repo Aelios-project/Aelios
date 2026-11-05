@@ -327,9 +327,55 @@ function ensureAccountIdVar() {
   console.log("\nCLOUDFLARE_ACCOUNT_ID auto-filled into [vars] from the deploy environment.");
 }
 
+// 运行地区在 /admin 里设（PLACEMENT_REGION），存在 D1 的配置里。Worker 自己改不了自己跑在哪，
+// 所以部署时读出来，像 D1 ID 一样只写进这一次部署的 wrangler.toml。构建环境里的 PLACEMENT_REGION 也认。
+// 没设就不写 [placement]：wrangler 以文件为准，之前设过的地区随这次部署取消。
+const PLACEMENT_REGION_RE = /^(aws|gcp|azure):[a-z0-9-]{2,40}$/i;
+function savedPlacementRegion() {
+  const result = run(["d1", "execute", dbName, "--remote", "--json", "--command",
+    "SELECT config_json FROM gateway_config WHERE id = 1"], { capture: true, allowFailure: true });
+  if (result.status !== 0) return "";
+  try {
+    const raw = JSON.parse(result.stdout)?.[0]?.results?.[0]?.config_json;
+    const region = raw ? JSON.parse(raw)?.settings?.PLACEMENT_REGION : "";
+    return typeof region === "string" ? region.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+/** The file without a [placement] table, so a region is never written twice. */
+function withoutPlacement(toml) {
+  const lines = toml.split("\n");
+  const out = [];
+  let inPlacement = false;
+  for (const line of lines) {
+    if (/^\s*\[placement\]\s*$/.test(line)) { inPlacement = true; continue; }
+    if (inPlacement && /^\s*\[/.test(line)) inPlacement = false;
+    if (!inPlacement) out.push(line);
+  }
+  return out.join("\n");
+}
+
+function ensurePlacement() {
+  const region = savedPlacementRegion() || process.env.PLACEMENT_REGION?.trim() || "";
+  if (!region) {
+    console.log("\nNo placement region set in /admin; the Worker runs wherever each request comes in.");
+    return;
+  }
+  if (!PLACEMENT_REGION_RE.test(region)) {
+    console.log(`\nIgnoring placement region "${region}": write it as provider:region, such as aws:ap-southeast-1.`);
+    return;
+  }
+  const toml = withoutPlacement(readFileSync(wranglerTomlPath, "utf8"));
+  writeFileSync(wranglerTomlPath, `${toml.trimEnd()}\n\n[placement]\nregion = "${region}"\n`);
+  console.log(`\nPlacement region for this deploy: ${region}`);
+}
+
 ensureVisibleVars();
 ensureAccountIdVar();
 ensureD1();
+ensurePlacement();
 ensureVectorize();
 ensureQueue();
 

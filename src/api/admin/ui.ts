@@ -1643,8 +1643,12 @@ tailwind.config = { corePlugins: { preflight: false } };
                   </div>
                   <div x-show="gwIsOpen('上游')" class="grid gap-2 px-[18px] pb-[18px]">
                     <input x-model="gwAddress" :aria-label="L('上游地址', 'Upstream')" class="field" :placeholder="L('CF 账号 ID（32 位），或完整地址，如 new-api 的 https://…/v1', 'Cloudflare account ID (32 chars), or a full address such as https://…/v1')">
-                    <p class="text-xs leading-5 muted">${t("chat 走 compat，全 provider；messages / responses 走各 provider 原生端点，模型名带 provider/ 前缀。BYOK 钥匙在 AI Gateway 仪表盘；CF 令牌去 Worker Secrets 加 CLOUDFLARE_API_TOKEN。Gateway ID 在「全部设置 → 模型与线路」里，默认 default。", "Chat uses the compat endpoint for every provider; messages / responses use each provider’s native endpoint, with a provider/ prefix on the model name. BYOK keys live in the AI Gateway dashboard; add CLOUDFLARE_API_TOKEN under Worker secrets. The gateway ID is under All settings → Models &amp; routing (default: default).")} <a href="https://dash.cloudflare.com/" target="_blank" rel="noopener">${t("打开 Cloudflare ↗", "Open Cloudflare ↗")}</a></p>
+                    <p class="text-xs leading-5 muted">${t("Claude（anthropic/…）的 messages 走 Cloudflare 的 AI REST API；chat 走 compat，全 provider；其余 messages / responses 走各 provider 原生端点。模型名带 provider/ 前缀。BYOK 钥匙在 AI Gateway 仪表盘；CF 令牌去 Worker Secrets 加 CLOUDFLARE_API_TOKEN，要有 AI Gateway Run 和 Workers AI Read。网关和运行地区在下面。", "Claude (anthropic/…) on messages goes to Cloudflare’s AI REST API; chat uses the compat endpoint for every provider; other messages / responses use each provider’s native endpoint. Model names carry a provider/ prefix. BYOK keys live in the AI Gateway dashboard; add CLOUDFLARE_API_TOKEN under Worker secrets, with AI Gateway Run and Workers AI Read. The gateway and where the Worker runs are set below.")} <a href="https://dash.cloudflare.com/" target="_blank" rel="noopener">${t("打开 Cloudflare ↗", "Open Cloudflare ↗")}</a></p>
                   </div>
+                </div>
+
+                <div class="px-[18px] py-1">
+                  <template x-for="item in gwUpstreamSettings()" :key="item.name">${SETTING_ROW}</template>
                 </div>
 
                 <div>
@@ -2431,12 +2435,16 @@ function memoryAdmin() {
       return items.filter(function(item) { return item.kind === 'switch'; })
         .concat(items.filter(function(item) { return item.kind !== 'switch'; }));
     },
-    // 没在搜时「常用」那几项不在分组里重复；搜的时候所有项都参与（中英文名、说明、变量名都能搜），命中的组自动展开。
+    // 网关和运行地区画在「模型与上游」里上游地址下面。
+    gwUpstreamSettings() {
+      return this.gwItems().filter(function(item) { return item.upstream; });
+    },
+    // 没在搜时「常用」和上游那几项不在分组里重复；搜的时候所有项都参与（中英文名、说明、变量名都能搜），命中的组自动展开。
     gwSections() {
       const q = this.gwQuery.trim().toLowerCase();
       return this.gwGroups.map(function(g) {
         const items = g.items.filter(function(item) {
-          if (!q) return !item.common;
+          if (!q) return !item.common && !item.upstream;
           return [item.label, item.hint, item.labelEn, item.hintEn, item.name, g.group, g.groupEn].some(function(text) { return String(text || '').toLowerCase().includes(q); });
         });
         return { group: g.group, groupEn: g.groupEn || '', items: items, changed: items.filter(function(item) { return item.saved; }).length };

@@ -4,11 +4,14 @@ import type { Env } from "../types";
 // kind "switch" 在设置页画成开关，defaultOn 是什么都没填时代码的默认；拨到跟默认/部署值一样就清掉覆盖，
 // 不一样就存 "true"/"false" (所有开关的读法都认这两个)。common 的几项放在设置页最上面「常用」里。
 // labelEn / hintEn / SETTING_GROUPS_EN 是英文版设置页用的；name、group 和中文 label/hint 不动，别处按它们认。
+// upstream 的几项画在「模型与上游」里上游地址下面，不在分组里重复。
 export interface SettingSpec {
   name: string; label: string; hint?: string; group: string;
   labelEn?: string; hintEn?: string;
-  kind?: "switch"; defaultOn?: boolean; common?: boolean;
+  kind?: "switch"; defaultOn?: boolean; common?: boolean; upstream?: boolean;
 }
+/** The Worker's placement hint: a cloud region the way Cloudflare names it, provider:region. */
+export const PLACEMENT_REGION_RE = /^(aws|gcp|azure):[a-z0-9-]{2,40}$/i;
 export const SETTING_GROUPS_EN: Record<string, string> = {
   "记忆召回": "Recall",
   "Dream 与日记": "Nightly run & journal",
@@ -71,7 +74,8 @@ export const SETTINGS: SettingSpec[] = [
 
   { group: "数据留存", name: "MESSAGES_RETENTION_DAYS", label: "原始对话保留天数", labelEn: "Keep chat transcripts (days)", hint: "Dream 抽完记忆后，原文留几天", hintEn: "How many days the original messages stay after the nightly run has pulled memories from them.", common: true },
 
-  { group: "模型与线路", name: "AI_GATEWAY_ID", label: "AI Gateway ID", labelEn: "AI Gateway ID", hint: "留空用账户的默认网关（default）。填了，聊天和夜整都走这个网关：Claude 的请求在 cf-aig-gateway-id 头里带上它，其余线路写进网关地址。自定义 Provider 和动态路由建在哪个网关上就填哪个", hintEn: "Blank uses the account's default gateway (default). Filled in, chats and the nightly run all use this gateway: Claude requests name it in the cf-aig-gateway-id header, the other routes put it in the gateway URL. Custom providers and dynamic routes need the gateway they were created on." },
+  { group: "模型与线路", name: "AI_GATEWAY_ID", label: "AI Gateway ID", labelEn: "AI Gateway ID", hint: "留空用账户的默认网关（default）。填了，聊天和夜整都走这个网关：Claude 的请求在 cf-aig-gateway-id 头里带上它，其余线路写进网关地址。自定义 Provider 和动态路由建在哪个网关上就填哪个。上游地址贴的是带网关的完整地址时，以地址里的为准", hintEn: "Blank uses the account's default gateway (default). Filled in, chats and the nightly run all use this gateway: Claude requests name it in the cf-aig-gateway-id header, the other routes put it in the gateway URL. Custom providers and dynamic routes need the gateway they were created on. A full gateway URL pasted as the upstream wins over this.", upstream: true },
+  { group: "模型与线路", name: "PLACEMENT_REGION", label: "Worker 运行地区", labelEn: "Where the Worker runs", hint: "填云服务商的区域，写成 服务商:区域，比如 aws:ap-southeast-1（新加坡）、aws:ap-northeast-1（东京）、aws:us-east-1（美东）、gcp:asia-east1、azure:southeastasia。Aelios 就在离那里最近的 Cloudflare 机房跑。下次 npm run deploy 时才生效，部署脚本从这里读出来写进那次部署；留空就是请求从哪进来就在哪跑", hintEn: "A cloud region as provider:region, such as aws:ap-southeast-1 (Singapore), aws:ap-northeast-1 (Tokyo), aws:us-east-1 (US East), gcp:asia-east1 or azure:southeastasia. Aelios then runs in the Cloudflare data center closest to it. Takes effect on the next npm run deploy: the deploy script reads it from here. Blank: it runs wherever each request comes in.", upstream: true },
   { group: "模型与线路", name: "UPSTREAM_STRIP_TOOL_FIELDS", label: "始终剥离的工具字段", labelEn: "Tool fields to always strip", hint: "逗号分隔，例如 eager_input_streaming,cache_control。填上就每次先剥，不再等上游那次 400。留空则按线路学习：只在被拒一次后自动剥离（换 isolate 会重学一次），接受该字段的上游不受影响。工具的身份字段 name/description/input_schema/type 会被拒绝", hintEn: "Comma-separated, e.g. eager_input_streaming,cache_control. Fields listed here are stripped every time, without waiting for the upstream to reject them with a 400. Blank: learned per route, stripping a field only after one rejection (relearned on a new isolate); upstreams that accept it are unaffected. Tool identity fields name/description/input_schema/type are refused." },
   { group: "模型与线路", name: "VISION_MODEL", label: "看图模型", labelEn: "Model for images" },
   { group: "模型与线路", name: "CHAT_MODEL", label: "导盲犬入口的模型", labelEn: "Model for the guide-dog endpoint", hint: "只给 /v1/guide-dog 用，聊天走网关身份", hintEn: "Only used by /v1/guide-dog. Chats go through the gateway's assistant setup." },
@@ -117,6 +121,9 @@ export function validateSettings(value: unknown): Record<string, string> {
     const trimmed = raw.trim();
     if (!trimmed) continue;
     if (trimmed.length > 512) throw new Error(`${name}: value too long`);
+    if (name === "PLACEMENT_REGION" && !PLACEMENT_REGION_RE.test(trimmed)) {
+      throw new Error(`${name}: write it as provider:region, such as aws:ap-southeast-1`);
+    }
     out[name] = trimmed;
   }
   return out;
@@ -140,6 +147,7 @@ export function describeSettings(env: Env, settings: Record<string, string>) {
       labelEn: spec.labelEn || "", hintEn: spec.hintEn || "",
       ...(spec.kind ? { kind: spec.kind, defaultOn: spec.defaultOn === true } : {}),
       ...(spec.common ? { common: true } : {}),
+      ...(spec.upstream ? { upstream: true } : {}),
       value: settings[spec.name] || "",
       deployed: typeof deployed === "string" ? deployed : ""
     });

@@ -97,7 +97,7 @@ npm run deploy
 - **Vectorize 索引维度不对、里面有数据**：脚本会停下，不会自己删。把原文给用户看，让用户决定。
 - **多个账号选不出来**：命令前带 `CLOUDFLARE_ACCOUNT_ID=<账号 ID>`。
 
-部署完，部署脚本把数据库 ID 和账号 ID 写进了 `wrangler.toml`，那只是这次部署用的，别提交：
+部署完，部署脚本把数据库 ID 和账号 ID（/admin 里设了 Worker 运行地区的，还有 `[placement]`）写进了 `wrangler.toml`，那只是这次部署用的，别提交：
 
 ```bash
 git checkout -- wrangler.toml

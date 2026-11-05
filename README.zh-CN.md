@@ -246,7 +246,7 @@ Cloudflare Workers 上的记忆网关。帮用户部署时只关联**用户自�
 
 入口：`/<助手>/v1/chat/completions`、`/<助手>/v1/messages`、`/<助手>/v1/responses`。不带助手名的 `/v1/...` 走该钥匙的第一个助手。
 
-CF 上游：messages 上的 Claude（`anthropic/…`）走 Cloudflare 的 AI REST API（`api.cloudflare.com/…/ai/v1/messages`），REST 不认这个模型、或者令牌没有 Workers AI Read 时，退回网关上 Anthropic 的端点；chat 走 compat（全厂商，BYOK）；其余 messages 和 responses 走各厂商原生端点。网关用 /admin 里填的（AI Gateway ID，或贴进去的网关地址），留空就是账户默认网关。模型名原样透传，厂商认不出来由上游报错。自定义 OpenAI 兼容地址原样转发。
+CF 上游：messages 上的 Claude（`anthropic/…`）走 Cloudflare 的 AI REST API（`api.cloudflare.com/…/ai/v1/messages`），REST 不认这个模型、或者令牌没有 Workers AI Read 时，退回网关上 Anthropic 的端点；chat 走 compat（全厂商，BYOK）；其余 messages 和 responses 走各厂商原生端点。网关用 /admin 里填的（AI Gateway ID，或贴进去的网关地址），留空就是账户默认网关。Worker 跑在哪（云区域，比如 `aws:ap-southeast-1`）也在那里设，下次 `npm run deploy` 时生效。模型名原样透传，厂商认不出来由上游报错。自定义 OpenAI 兼容地址原样转发。
 
 配置三层，都在 `/admin` 的「设置」：上游、助手、环境参数。优先级：面板保存的 > `GATEWAY_CONFIG` > 空配置。
 

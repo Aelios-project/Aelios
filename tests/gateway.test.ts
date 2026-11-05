@@ -5,7 +5,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import worker from "../src/index";
 import { identityNamespace, identityReadNamespaces, invalidateSettingsCache, loadSettings, speakersForNamespace, validateConfig } from "../src/gateway/config";
-import { applySettings } from "../src/gateway/settings";
+import { applySettings, describeSettings, validateSettings } from "../src/gateway/settings";
 import { appendMemory, classifyTurn, canonical } from "../src/gateway/protocol";
 import { catalogClaude, catalogUrl, forgetRestRefusals, nativeAnthropic, resolveUpstream, restRefused, routeFor, rejectedToolFields } from "../src/gateway/upstream";
 import { callOpenAICompat } from "../src/proxy/openaiAdapter";
@@ -1008,6 +1008,23 @@ test("any provider gets a native messages/responses route; prefixless models are
   assert.equal(bare.response.status, 400);
   assert.match(bare.text, /provider prefix/);
   assert.equal(calls.length, 2);
+});
+
+test("the gateway and the Worker's region sit under the upstream; the region is saved only as provider:region", async () => {
+  for (const region of ["aws:ap-southeast-1", "gcp:asia-east1", "azure:southeastasia", " AWS:us-east-1 "]) {
+    assert.equal(validateSettings({ PLACEMENT_REGION: region }).PLACEMENT_REGION, region.trim());
+  }
+  for (const bad of ["ap-southeast-1", "aws", "aws:", "oracle:ap-tokyo-1", "aws:us east 1", "aws:us-east-1;rm"]) {
+    assert.throws(() => validateSettings({ PLACEMENT_REGION: bad }), /provider:region/, bad);
+  }
+  // A bad value is refused when saved, and the saved config stays as it was.
+  const refused = await worker.fetch(request("/api/gateway/config", { settings: { PLACEMENT_REGION: "singapore" } }, {}, "PATCH"), env, ctx);
+  assert.equal(refused.status, 400);
+  const saved = await worker.fetch(request("/api/gateway/config", { settings: { PLACEMENT_REGION: "aws:ap-southeast-1", AI_GATEWAY_ID: "her-gateway" } }, {}, "PATCH"), env, ctx);
+  assert.equal(saved.status, 200);
+  const items = describeSettings({} as any, { PLACEMENT_REGION: "aws:ap-southeast-1" }).groups.flatMap((g: any) => g.items);
+  assert.deepEqual(items.filter((item: any) => item.upstream).map((item: any) => item.name), ["AI_GATEWAY_ID", "PLACEMENT_REGION"]);
+  assert.equal(items.find((item: any) => item.name === "PLACEMENT_REGION").value, "aws:ap-southeast-1");
 });
 
 test("settings edited in the admin page override deployment vars everywhere", async () => {

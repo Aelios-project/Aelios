@@ -47,7 +47,8 @@ Aelios 负责身份、临时召回和自动记录，客户端 Harness 负责工�
 
 聊天协议路由(仅 CF 上游;自定义地址原样透传):
 
-- 网关:`/admin` 上游地址里贴的网关地址带的那个,其次是设置 `AI_GATEWAY_ID`;都没有就是账户默认网关(REST 不带网关头,带网关路径的地址填 `default`)。夜整等后台调用用同一个网关。
+- 网关:`/admin` 上游地址里贴的网关地址带的那个,其次是设置 `AI_GATEWAY_ID`;都没有就是账户默认网关(REST 不带网关头,带网关路径的地址填 `default`)。夜整等后台调用用同一个网关。`AI_GATEWAY_ID` 和下面的运行地区都在 `/admin`「模型与上游」里上游地址下面。
+- Worker 运行地区:设置 `PLACEMENT_REGION`,写成 `服务商:区域`(`aws:ap-southeast-1`、`gcp:asia-east1`、`azure:southeastasia`,存的时候只认这个格式)。Worker 改不了自己跑在哪,所以它在下次 `npm run deploy` 时才生效:`scripts/setup-cloudflare.mjs` 从 D1 的配置里读出来,写成那次部署 `wrangler.toml` 的 `[placement] region`;构建环境变量 `PLACEMENT_REGION` 也认,/admin 的优先。留空不写 `[placement]`,之前设过的地区随那次部署取消。
 - messages 上的 `anthropic/…` 走 AI REST API `https://api.cloudflare.com/client/v4/accounts/{账号}/ai/v1/messages`:CF token 以 `Authorization: Bearer` 携带(令牌要有 `Workers AI Read`),指定了网关就加 `cf-aig-gateway-id` 头;模型名用 CF 目录的写法(`anthropic/claude-opus-5.5`,横线写法 `claude-opus-5-5` 会被换成点,REST 只认点);`anthropic-beta`/`anthropic-version` 原样带过去,回来的是 Anthropic 原样的 JSON、报错和 SSE;BYOK 只认别名 `default` 的 key,没有就走统一计费。REST 回 404「Model not found」/5007(目录里没有这个模型)或 401 code 10000(令牌缺 `Workers AI Read`)时,同一请求改发 `…/{网关}/anthropic/v1/messages`,这个 isolate 之后也直接走那边;模型自己的报错(包括 403)照原样回。
 - chat 走 `…/{网关}/compat/chat/completions`(全 provider,BYOK)。REST 只认统一计费目录里的模型,`deepseek/…` 这类只有 BYOK 的、`google-ai-studio/`/`grok/`/`workers-ai/` 这类按 provider 起的名字、`openrouter/…` 和 `custom-…` 在 REST 上都 404 或 500(2026-11-05 实测),所以 chat 不走 REST。
 - 其余 messages 走 `…/{网关}/{provider}/v1/messages`,responses 走 `…/{网关}/{provider}/v1/responses`(openai 特例无 v1),模型名剥掉 provider 前缀,CF token 以 `cf-aig-authorization` 头携带;provider 不认的协议由上游如实报错。responses 没搬到 REST:REST 的 `/ai/v1/responses` 会把回复 id 换成 `id-…`,靠 `previous_response_id` 续聊的客户端接不上。

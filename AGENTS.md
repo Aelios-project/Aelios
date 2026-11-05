@@ -10,7 +10,7 @@ Follow [docs/setup-with-ai.md](docs/setup-with-ai.md) step by step. It starts fr
 
 - Deploy only with `npm run deploy`. A bare `wrangler deploy` does not create the database or the index.
 - This is a Wrangler project. Do not run `cf dev`, `cf build`, `cf deploy` or `cf migrate` here. Use `cf` only for account resources such as AI Gateway, API tokens and Worker secrets, and for read-only commands such as `cf d1 list`.
-- `npm run deploy` writes the D1 database ID and the account ID into `wrangler.toml` for that one deploy. Never commit those changes: `git checkout -- wrangler.toml` afterwards.
+- `npm run deploy` writes the D1 database ID, the account ID and, when one is set in /admin, the Worker's placement region into `wrangler.toml` for that one deploy. Never commit those changes: `git checkout -- wrangler.toml` afterwards.
 - Never write secrets into any tracked file, and never ask the user to paste a Cloudflare API token, GitHub token or model provider key into the chat. The user stores provider keys in Cloudflare themselves. A token you generate goes straight into a Worker secret through a pipe; never print it or write it to a file. See [SECRETS.md](SECRETS.md).
 - Never delete or replace a D1 database, Vectorize index, queue, Worker, AI Gateway, stored provider key, Worker secret or configured assistant without the user's explicit go-ahead. The memories live there.
 
