@@ -200,7 +200,7 @@ cf accounts tokens permission-groups list --name "Workers%20AI%20Read"
 cf accounts tokens permission-groups list --name "Vectorize%20Read"
 ```
 
-前三个是聊天转发要的；`Vectorize Read` 给维护工具按 Vectorize 列记忆用，找不到可以不加。把 ID 写进一个临时的策略文件（这里面没有秘密）：
+前三个是聊天转发要的：Claude 走 Cloudflare 的 AI REST API（`api.cloudflare.com/…/ai/v1/messages`），那里要 `Workers AI Read`；其余线路要 `AI Gateway Run`。`Vectorize Read` 给维护工具按 Vectorize 列记忆用，找不到可以不加。把 ID 写进一个临时的策略文件（这里面没有秘密）：
 
 ```json
 [{
@@ -219,7 +219,7 @@ V=$(cf accounts tokens create --name aelios-gateway --policies @/tmp/aelios-poli
   && echo 已存; unset V; rm -f /tmp/aelios-policy.json
 ```
 
-建令牌被拒（比如登录的账号没有建令牌的权限）：别反复试。让用户在后台建一把，再自己填进 Worker：AI Gateway → `default` → **Settings** → **Authenticated Gateway** 那里建令牌；然后 **Workers & Pages** → `companion-memory-proxy` → **Settings → Variables and Secrets** → **Add**，类型选 **Secret**，名字 `CLOUDFLARE_API_TOKEN`，值是那把令牌。
+建令牌被拒（比如登录的账号没有建令牌的权限）：别反复试。让用户在后台建一把，再自己填进 Worker：**My Profile → API Tokens → Create Token → Custom token**，权限加上面三个（`AI Gateway Run`、`AI Gateway Read`、`Workers AI Read`，账户选这个账号）。AI Gateway 设置页里「Authenticated Gateway」建的那种只有 `AI Gateway Run`，也能用，只是 Claude 每次都得退回旧接口。然后 **Workers & Pages** → `companion-memory-proxy` → **Settings → Variables and Secrets** → **Add**，类型选 **Secret**，名字 `CLOUDFLARE_API_TOKEN`，值是那把令牌。
 
 ## 6. 配助手
 

@@ -32,7 +32,8 @@ binding = "AI"
 [vars]
 # Deployment defaults. Everything here can be overridden from /admin/gateway
 # without touching Cloudflare Variables; the page shows these values as hints.
-AI_GATEWAY_ID = "default"
+# AI_GATEWAY_ID is left out on purpose: a value here would overwrite the one set in the Dashboard on every
+# deploy. Unset, calls go to the account's default gateway; name another one in /admin.
 PUBLIC_MODEL_NAME = "companion"
 CHAT_MODEL = "deepseek/deepseek-v4-pro"
 MEMORY_FILTER_MAX_CANDIDATES = "16"

@@ -237,7 +237,7 @@ A memory gateway on Cloudflare Workers. When helping a user deploy, always link 
 
 Entry points: `/<assistant>/v1/chat/completions`, `/<assistant>/v1/messages`, `/<assistant>/v1/responses`. A bare `/v1/...` uses the first assistant of that key.
 
-Upstreams: chat goes through compat (all vendors, BYOK); messages / responses hit each vendor's native endpoint. Model names pass through untouched — if the vendor doesn't recognize one, the upstream error says so. Custom OpenAI-compatible base URLs are forwarded as-is.
+Upstreams: Claude on messages (`anthropic/…`) goes to Cloudflare's AI REST API (`api.cloudflare.com/…/ai/v1/messages`), and falls back to Anthropic's endpoint on the gateway when REST doesn't know the model or the token lacks Workers AI Read. Chat goes through compat (all vendors, BYOK); other messages and responses hit each vendor's native endpoint. The gateway is the one named in /admin (AI Gateway ID, or a pasted gateway URL); blank means the account's default gateway. Model names pass through untouched — if the vendor doesn't recognize one, the upstream error says so. Custom OpenAI-compatible base URLs are forwarded as-is.
 
 Configuration has three layers, all under `/admin` Settings: upstream, assistants, environment parameters. Precedence: panel-saved > `GATEWAY_CONFIG` > empty config.
 

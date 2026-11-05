@@ -1,6 +1,7 @@
 import type { AssembledPrompt } from "../assembler/types";
 import { assembledToOpenAIChatMessages } from "../assembler/toOpenAI";
 import { callChatGptChat, isChatGptModel } from "../chatgpt/internal";
+import { ACCOUNT_DEFAULT_GATEWAY, resolveGatewayId } from "../gateway/upstream";
 import type { Env, OpenAIChatRequest, OpenAIChatResponse } from "../types";
 
 function workersAiModelName(model: string): string | null {
@@ -250,8 +251,9 @@ export async function callOpenAICompat(env: Env, body: OpenAIChatRequest, waitUn
     }
   }
 
-  if (env.AI_GATEWAY_ID && env.AI) {
-    return env.AI.gateway(env.AI_GATEWAY_ID).run({
+  // The gateway the chats use (AI_GATEWAY_ID, or the one a pasted URL names: loadSettings); none named, the account's.
+  if (env.AI) {
+    return env.AI.gateway(resolveGatewayId(env) ?? ACCOUNT_DEFAULT_GATEWAY).run({
       provider: "compat", endpoint: "chat/completions", headers: {}, query: body
     }, { signal });
   }
