@@ -7,7 +7,7 @@ import worker from "../src/index";
 import { identityNamespace, identityReadNamespaces, invalidateSettingsCache, loadSettings, speakersForNamespace, validateConfig } from "../src/gateway/config";
 import { applySettings, describeSettings, validateSettings } from "../src/gateway/settings";
 import { appendMemory, classifyTurn, canonical } from "../src/gateway/protocol";
-import { catalogClaude, catalogUrl, forgetRestRefusals, nativeAnthropic, resolveUpstream, restRefused, routeFor, rejectedToolFields } from "../src/gateway/upstream";
+import { anthropicClaude, catalogClaude, catalogUrl, forgetRestRefusals, nativeAnthropic, resolveUpstream, restRefused, routeFor, rejectedToolFields } from "../src/gateway/upstream";
 import { callOpenAICompat } from "../src/proxy/openaiAdapter";
 import { OutputCollector, observeResponse, persistExchange, prepareExchange, dispatchExchange } from "../src/gateway/record";
 import { getOrCreateConversation } from "../src/db/conversations";
@@ -839,10 +839,14 @@ test("Claude ids go to REST in Cloudflare's catalog spelling", () => {
     assert.equal(catalogClaude(name), name);
   }
   const resolved = resolveUpstream({} as any, { version: 3, upstream: { address: "f".repeat(32) }, identities: [] });
-  const route = routeFor(resolved, "messages", "anthropic/claude-opus-5-5");
-  assert.equal(route.model, "anthropic/claude-opus-5.5");
-  // The provider endpoint keeps Anthropic's own spelling.
-  assert.equal(route.fallback?.model, "claude-opus-5-5");
+  // A client may write the version either way: REST gets the catalog's dot, Anthropic's endpoint its own dash.
+  for (const sent of ["anthropic/claude-opus-5-5", "anthropic/claude-opus-5.5"]) {
+    const route = routeFor(resolved, "messages", sent);
+    assert.equal(route.model, "anthropic/claude-opus-5.5", sent);
+    assert.equal(route.fallback?.model, "claude-opus-5-5", sent);
+  }
+  assert.equal(anthropicClaude("claude-haiku-4.5-20251001"), "claude-haiku-4-5-20251001");
+  assert.equal(anthropicClaude("claude-opus-5"), "claude-opus-5");
 });
 
 test("Claude messages on CF go to the REST API: token as bearer, catalog id, gateway in cf-aig-gateway-id", async () => {
@@ -863,6 +867,8 @@ test("Claude messages on CF go to the REST API: token as bearer, catalog id, gat
 test("what REST alone refuses goes to the provider endpoint; the model's own answers do not", () => {
   assert.equal(restRefused(404, '{"type":"error","error":{"type":"not_found_error","message":"Model not found: anthropic/claude-x"}}'), "model");
   assert.equal(restRefused(400, '{"errors":[{"message":"AiError: No such model","code":5007}],"success":false}'), "model");
+  // What /ai/v1/messages answers to a name the catalog lacks (anthropic/anthropic/claude-opus-5.5, checked 2026-11-05).
+  assert.equal(restRefused(400, '{"type":"error","error":{"type":"invalid_request_error","message":"AiError: No such model: No such model anthropic/anthropic/claude-opus-5.5 or task (0b00)"}}'), "model");
   assert.equal(restRefused(401, '{"errors":[{"code":10000,"message":"Authentication error"}],"success":false}'), "token");
   assert.equal(restRefused(403, '{"error":{"type":"forbidden","message":"Request not allowed"}}'), null);
   assert.equal(restRefused(400, '{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: too large"}}'), null);

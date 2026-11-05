@@ -128,6 +128,11 @@ export function catalogClaude(name: string): string {
   return name.replace(/^(claude-[a-z]+-\d+)-(\d)(?=$|\D)/i, "$1.$2");
 }
 
+/** The other way: Anthropic's own endpoint takes claude-opus-5-5 and not claude-opus-5.5. Clients may send either. */
+export function anthropicClaude(name: string): string {
+  return name.replace(/^(claude-[a-z]+-\d+)\.(\d)(?=$|\D)/i, "$1-$2");
+}
+
 /**
  * Where each protocol goes on Cloudflare (checked against the live API 2026-11-05):
  *  - messages for anthropic/… → the AI REST API, /ai/v1/messages: Anthropic's own answers, errors and SSE, the
@@ -153,8 +158,9 @@ export function routeFor(resolved: ResolvedUpstream, protocol: Protocol, model: 
     : provider === "openai" || custom ? "/responses" : "/v1/responses";
   const providerRoute: UpstreamRoute = { url: `${gw}/${provider}${path}`, model: native, auth: "cf-aig" };
   if (protocol !== "messages" || provider !== "anthropic") return providerRoute;
+  // Clients spell a Claude version either way; each endpoint gets the spelling it takes.
   return { url: `${restBase(resolved.accountId)}/messages`, model: `anthropic/${catalogClaude(native)}`, auth: "rest",
-    gateway: resolved.gatewayId, fallback: providerRoute };
+    gateway: resolved.gatewayId, fallback: { ...providerRoute, model: anthropicClaude(native) } };
 }
 
 /** Anthropic's own line behind CF; it enforces thinking prefix bindings by default (seen 2026-10-08). */
@@ -165,13 +171,13 @@ export function nativeAnthropic(route: UpstreamRoute): boolean {
 
 /**
  * Whether the REST API turned the call down for a reason the provider endpoint does not have, so the same
- * request should go there instead: a model the catalog does not know (404 "Model not found", or CF's 5007), or a
- * token without the Workers AI Read permission REST needs (401, CF code 10000). Answers from the model itself,
- * including its own 403s, are not retried.
+ * request should go there instead: a model the catalog does not know (404 "Model not found"; or 400 "No such model",
+ * in Anthropic's error shape on /messages and as CF's code 5007 elsewhere), or a token without the Workers AI Read
+ * permission REST needs (401, CF code 10000). Answers from the model itself, including its own 403s, are not retried.
  */
 export function restRefused(status: number, text: string): "model" | "token" | null {
   if (status === 404 && /Model not found/i.test(text)) return "model";
-  if (status === 400 && /"code"\s*:\s*5007\b/.test(text)) return "model";
+  if (status === 400 && (/"code"\s*:\s*5007\b/.test(text) || /No such model/i.test(text))) return "model";
   if (status === 401 && /"code"\s*:\s*10000\b/.test(text)) return "token";
   return null;
 }
