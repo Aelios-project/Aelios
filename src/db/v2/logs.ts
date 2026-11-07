@@ -388,3 +388,68 @@ export function bindDeleteWeeklyLogsByWeeksStatement(
       .bind(input.namespace, ...input.weeks)
   ];
 }
+
+// =====================================================================
+// 并入月记的周 folded_week (月记删掉 weekly_log 后留的记号，周记队列靠它跳过)
+// =====================================================================
+
+export interface FoldedWeekRow {
+  namespace: string;
+  week: string;
+  month: string;
+  start_date: string;
+  end_date: string;
+  folded_at: string;
+}
+
+export function bindRecordFoldedWeeksStatements(
+  db: D1Database,
+  input: {
+    namespace: string;
+    month: string;
+    weeks: Array<{ week: string; start_date: string; end_date: string }>;
+  }
+): D1PreparedStatement[] {
+  const now = nowIso();
+  return input.weeks.map((row) =>
+    db
+      .prepare(
+        `INSERT INTO folded_week (namespace, week, month, start_date, end_date, folded_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(namespace, week) DO UPDATE SET
+           month = excluded.month,
+           start_date = excluded.start_date,
+           end_date = excluded.end_date,
+           folded_at = excluded.folded_at`
+      )
+      .bind(input.namespace, row.week, input.month, row.start_date, row.end_date, now)
+  );
+}
+
+export async function getFoldedWeek(
+  db: D1Database,
+  input: { namespace: string; week: string }
+): Promise<FoldedWeekRow | null> {
+  const row = await db
+    .prepare(
+      `SELECT namespace, week, month, start_date, end_date, folded_at
+       FROM folded_week
+       WHERE namespace = ? AND week = ?`
+    )
+    .bind(input.namespace, input.week)
+    .first<FoldedWeekRow>();
+  return row ?? null;
+}
+
+/** Weeks that need no new weekly summary: they have one, or a monthly summary absorbed theirs. */
+export async function listSettledWeeks(db: D1Database, input: { namespace: string }): Promise<Set<string>> {
+  const result = await db
+    .prepare(
+      `SELECT week FROM weekly_log WHERE namespace = ?
+       UNION
+       SELECT week FROM folded_week WHERE namespace = ?`
+    )
+    .bind(input.namespace, input.namespace)
+    .all<{ week: string }>();
+  return new Set((result.results ?? []).map((row) => row.week));
+}

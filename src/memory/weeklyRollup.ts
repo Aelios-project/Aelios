@@ -2,9 +2,11 @@ import {
   bindDeleteDailyLogsInRangeStatement,
   bindUpsertWeeklyLogStatement,
   deleteDailyLogsInRange,
+  getFoldedWeek,
   getWeeklyLog,
   listDailyLogDatesBefore,
-  listDailyLogsInRange
+  listDailyLogsInRange,
+  listSettledWeeks
 } from "../db/v2";
 import type { Env } from "../types";
 import { callModelWithRetry, ModelCallError, readModelName } from "../utils/modelCall";
@@ -399,13 +401,15 @@ async function processWeek(
   }
 }
 
-// 审阅通过后的亲手删除：核对该周 weekly_log 确实存在，才删它范围内的 daily_log。
+// 审阅通过后的亲手删除：核对该周 weekly_log 确实存在 (或已并进月记)，才删它范围内的 daily_log。
 // 这是 /admin/weekly-approve 的执行体——审阅链上的"人"就在这一步。
 export async function approveWeeklyRollup(
   env: Env,
   input: { namespace: string; week: string }
 ): Promise<{ week: string; start_date: string; end_date: string; deleted_days: number }> {
-  const weekly = await getWeeklyLog(env.DB, { namespace: input.namespace, week: input.week });
+  const weekly =
+    (await getWeeklyLog(env.DB, { namespace: input.namespace, week: input.week })) ??
+    (await getFoldedWeek(env.DB, { namespace: input.namespace, week: input.week }));
   if (!weekly) {
     throw new Error(`weekly_log ${input.week} not found; roll it up before approving`);
   }
@@ -446,7 +450,14 @@ export async function runWeeklyRollup(
   }
 
   const dates = await listDailyLogDatesBefore(env.DB, { namespace, beforeDate: cutoffDate });
-  const eligibleWeeks = collectEligibleWeeks({ dates, cutoffDate, timeZone });
+  const weeksWithDailies = collectEligibleWeeks({ dates, cutoffDate, timeZone });
+  // With the review gate on, daily_log rows outlive their weekly summary, so the oldest
+  // weeks with dailies are usually finished ones. Taking those first used up every run on
+  // weeks already written (or already folded into a monthly summary) and newer weeks never
+  // got their turn. Queue only the unwritten weeks. With deletion on, finished weeks keep
+  // their place so processWeek clears their leftover dailies as before.
+  const settledWeeks = shouldDeleteDailies(env) ? new Set<string>() : await listSettledWeeks(env.DB, { namespace });
+  const eligibleWeeks = weeksWithDailies.filter((range) => !settledWeeks.has(range.week));
   const weeksToProcess = eligibleWeeks.slice(0, MAX_WEEKS_PER_RUN);
   const details: WeeklyRollupWeekDetail[] = [];
 

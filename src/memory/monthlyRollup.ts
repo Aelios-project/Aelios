@@ -1,5 +1,6 @@
 import {
   bindDeleteWeeklyLogsByWeeksStatement,
+  bindRecordFoldedWeeksStatements,
   bindUpsertMonthlyLogStatement,
   getMonthlyLog,
   listWeeklyLogsBeforeStartDate,
@@ -278,7 +279,10 @@ async function processMonth(
       namespace,
       weeks: weeklyLogs.map((row) => row.week)
     });
-    const results = await env.DB.batch([upsertStmt, ...deleteStmts]);
+    // Remember the folded weeks: their daily_log rows may still be kept for review, and
+    // the weekly rollup must not take them for unwritten weeks once weekly_log is gone.
+    const foldedStmts = bindRecordFoldedWeeksStatements(env.DB, { namespace, month, weeks: weeklyLogs });
+    const results = await env.DB.batch([upsertStmt, ...deleteStmts, ...foldedStmts]);
 
     const saved = await getMonthlyLog(env.DB, { namespace, month });
     if (!saved) {
