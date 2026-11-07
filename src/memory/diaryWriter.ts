@@ -1,5 +1,5 @@
 import { listMessagesByNamespaceInRange } from "../db/messages";
-import { getDailyLog, getWeeklyLog, upsertDailyLog } from "../db/v2";
+import { getDailyLog, getFoldedWeek, getWeeklyLog, upsertDailyLog } from "../db/v2";
 import type { Env, MessageRecord } from "../types";
 import { callModelWithRetry, ModelCallError, readModelName } from "../utils/modelCall";
 import {
@@ -546,7 +546,8 @@ export async function runDiaryWriter(
 
   const timeZone = readDreamTimeZoneFromEnv(env);
   const week = getIsoWeekLabelForDateLabel(dateLabel, timeZone);
-  const existingWeekly = await getWeeklyLog(env.DB, { namespace, week });
+  const existingWeekly =
+    (await getWeeklyLog(env.DB, { namespace, week })) ?? (await getFoldedWeek(env.DB, { namespace, week }));
   if (existingWeekly) {
     return { enabled: true, date: dateLabel, ran: false, reason: "week_already_rolled_up" };
   }
