@@ -1,5 +1,5 @@
 import { authenticate } from "../../auth/apiKey";
-import { countKeptDiarySources, listRecentDailyLogs, listRecentWeeklyLogs } from "../../db/v2";
+import { countKeptDiarySources, listRecentDailyLogs, listRecentMonthlyLogs, listRecentWeeklyLogs } from "../../db/v2";
 import { runDiaryWriter } from "../../memory/diaryWriter";
 import { runMonthlyRollup } from "../../memory/monthlyRollup";
 import { approveWeeklyRollup, runWeeklyRollup } from "../../memory/weeklyRollup";
@@ -42,9 +42,10 @@ export async function handleDiaryAdmin(request: Request, env: Env): Promise<Resp
   const parsedLimit = Number(url.searchParams.get("limit") || 30);
   const limit = Number.isFinite(parsedLimit) ? parsedLimit : 30;
 
-  const [dailyRows, weeklies] = await Promise.all([
+  const [dailyRows, weeklies, monthlies] = await Promise.all([
     listRecentDailyLogs(env.DB, { namespace, limit }),
-    listRecentWeeklyLogs(env.DB, { namespace, limit })
+    listRecentWeeklyLogs(env.DB, { namespace, limit }),
+    listRecentMonthlyLogs(env.DB, { namespace, limit })
   ]);
   const dates = dailyRows.map((row) => row.date).sort();
   // 数不出来就不给这个字段，后台退回只显示挂了几条原文，别误报"已清理"。
@@ -62,7 +63,8 @@ export async function handleDiaryAdmin(request: Request, env: Env): Promise<Resp
       namespace,
       limit,
       dailies,
-      weeklies
+      weeklies,
+      monthlies
     }
   });
 }

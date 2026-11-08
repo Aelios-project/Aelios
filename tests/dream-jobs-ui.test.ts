@@ -219,6 +219,32 @@ test("a diary can be rewritten from its page: confirms, posts the date, reloads 
   assert.equal(app.diaryRewriting, "");
 });
 
+test("the journal has a monthly tab that lists monthly summaries without daily-only controls", async () => {
+  assert.match(ADMIN_HTML, /@click="diaryMode = 'monthly'; diaryPick = ''; diaryReading = false"/);
+  // Rewrite and source chips belong to daily entries only, so a monthly entry never shows them.
+  assert.match(ADMIN_HTML, /x-show="entry\.date && entry\.sources_kept !== 0"/);
+  assert.match(ADMIN_HTML, /x-show="entry\.date && entry\.sources_kept != null"/);
+
+  const { app } = panel();
+  app.request = async (path: string) => {
+    if (path.startsWith("/admin/diary")) {
+      return { data: { dailies: [], weeklies: [], monthlies: [{ month: "2026-08", title: "八月", summary: "合成月记。", source_week_count: 2 }] } };
+    }
+    throw new Error(`unexpected path ${path}`);
+  };
+  await app.loadDiary();
+  app.diaryMode = "monthly";
+  const items = app.diaryListItems();
+  assert.equal(items.length, 1);
+  assert.equal(items[0].key, "monthly:2026-08");
+  assert.equal(app.diaryCurrent().title, "八月");
+
+  app.lang = "zh";
+  assert.equal(app.monthLabel("2026-08"), "2026年8月");
+  app.lang = "en";
+  assert.equal(app.monthLabel("2026-08"), "August 2026");
+});
+
 test("a declined confirmation or a rewrite already in flight never reaches the API", async () => {
   const declined = panel(false);
   declined.app.request = async () => { throw new Error("must not call the API"); };
