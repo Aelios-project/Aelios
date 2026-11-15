@@ -1,6 +1,6 @@
 # 让 AI 帮你装好、配好 Aelios
 
-这份说明是写给 AI 看的。你用 Claude Code、Codex、Cursor 这类能跑命令的 AI，把下面这段话发给它就行：
+这份说明是写给 AI 看的。你用 Claude Code、Codex、Cursor 这类能跑命令的 AI，或者连上了 Cloudflare MCP 的 AI，把下面这段话发给它就行：
 
 ```text
 帮我装好、配好 Aelios（我的 AI 记忆网关）。先读 https://raw.githubusercontent.com/Aelios-project/Aelios/main/docs/setup-with-ai.md ，照着做。需要我在浏览器里点、或者需要我自己填 key 的时候，停下来告诉我去哪儿填。
@@ -18,6 +18,8 @@
 
 你自己要动手的只有这几件：在浏览器里点「允许」，让 AI 登录 Cloudflare（新装要点两次，一次部署、一次配网关；装过的点一次）；把模型的 key 存进 Cloudflare 后台，key 不经过 AI。其余的，包括部署、生成 Cloudflare 的令牌、配助手、导入以前的记忆，都交给 AI。
 
+AI 连着 Cloudflare MCP 的话更省事：连 MCP 时授权一次就够，不用装命令行、不用再登录；新装的话部署改成你在 Cloudflare 后台点几下导入。
+
 ---
 
 ## 给 AI：先守这几条
@@ -26,6 +28,7 @@
 - **别让用户把凭证贴进对话**：模型厂商的 key、Cloudflare API Token、GitHub Token 都不行。厂商的 key 由用户自己存进 Cloudflare 后台（第 4 步）。唯一的例外是 Aelios 自己的访问钥匙 `CHATBOX_API_KEY`：它本来就要填进用户的客户端，用户愿意给你就收。
 - **你生成的 Cloudflare 令牌别打印、别写进文件**，用管道直接存进 Worker（第 5 步的命令就是这么写的）。
 - **没经用户同意，别删、别换已有的东西**：AI Gateway、厂商 key、Worker 的 Secret、已配好的助手、D1 数据库、Vectorize 索引都不行。记忆就存在里面。
+- **手边有 Cloudflare MCP 就先用它**（见第 1 步），没有再装 `cf` 命令行。
 - 部署只用 `npm run deploy`。这个仓库是 wrangler 项目，**别跑 `cf deploy`、`cf dev`、`cf build`、`cf migrate`**。`cf` 只拿来配账号里的东西：AI Gateway、令牌、Worker 的 Secret。
 - 卡住了别换着法子硬试。把报错原文和你的判断告诉用户，问下一步。
 
@@ -49,7 +52,41 @@
 5. **你的 AI 叫什么名字？用户希望被怎么称呼？** 地址里那一段就用 AI 的名字，转成小写拼音或英文（比如叫阿遥就写 `ayao`），下面的命令里写作 `<名字>`。原名填 `assistantName`、用户的称呼填 `userName`，夜里写日记就这么叫他们。
 6. **有没有以前的记忆、聊天记录要搬过来？** 有的话配完做「导入以前的记忆和聊天记录」。
 
-## 1. 准备工具，登录 Cloudflare 命令行
+## 1. 连上 Cloudflare：有 MCP 先用 MCP
+
+### 有 Cloudflare MCP：优先走这条
+
+你手边有能直接调 Cloudflare API 的工具（Cloudflare 官方的 MCP，一般有 `search` 查接口、`execute` 里用 `cloudflare.request()` 发请求），就用它，别再装 `cf`、别让用户登录命令行。它不读本机的环境变量和 `.env`，不会被旧令牌顶替；请求从 Cloudflare 那边发出，云端沙盒的网络白名单也拦不住。
+
+先确认权限够，两条都只读：
+
+1. `GET /accounts`：拿账号 ID（32 位）。不止一个就问用户用哪个。
+2. `GET /accounts/<账号 ID>/ai-gateway/gateways`：能列出来（空列表也算）就行。
+
+第 2 条报 403 或 Authentication error：是用户连 MCP 时没授 AI Gateway 的权限。请用户断开这个 MCP 重新连，授权页面上把 AI Gateway、Workers（脚本和 Secret）、API 令牌相关的权限都勾上。重连后还是 403，就改走下面的命令行。
+
+**MCP 做不了的两件事：**
+
+- **部署（第 2 步）**：新装的请用户在后台导入 fork：照 README「1. 部署」的第 1、2 条做（Fork；**Workers & Pages → Create → Import a repository**，选 fork，项目名 `companion-memory-proxy`，构建命令 `npm ci`，部署命令 `npm run deploy`）。部署命令会自己建库、建索引、建队列。README 那里第 3 条（自己编 `CHATBOX_API_KEY`）不用做，钥匙由你在第 3 步设。这样部署也就连好了 fork，第 9 步不用再做。部署完请用户把 Worker 地址给你，或者你用 `GET /accounts/<账号 ID>/workers/subdomain` 拿到子域，自己拼出地址。
+- **访问用户的 Worker（第 3 步验钥匙、第 6 步配助手、第 7 步试一句）**：这几步是发给 Worker 地址的，不走 Cloudflare API。你能跑 curl 就照常做；连不上的（云端沙盒常见，报错里有 `CONNECT tunnel failed`、proxy 之类）就请用户自己做：打开 `<Worker 地址>/admin`，在「设置」里把上游地址填成账号 ID、照第 6 步的说明加助手，然后在聊天软件里发一句试试。
+
+**其余每一步，把 `cf` 命令换成这些接口**（`<账号 ID>` 下面简写成 `<A>`；请求体拿不准就先用 MCP 的 search 查这个接口）：
+
+| 步骤 | 用这个接口 |
+|---|---|
+| 第 3 步 设钥匙 | `PUT /accounts/<A>/workers/scripts/companion-memory-proxy/secrets`，请求体 `{"name":"CHATBOX_API_KEY","text":"<钥匙>","type":"secret_text"}`。钥匙在 execute 里用 `crypto.getRandomValues` 生成，格式跟第 3 步一样（`sk-aelios-` 开头），存好再返回给你，交给用户 |
+| 第 4 步 看网关 | `GET /accounts/<A>/ai-gateway/gateways/default` |
+| 第 4 步 建网关 | `POST /accounts/<A>/ai-gateway/gateways`，字段跟命令行参数一样，写成下划线：`id`、`authentication`、`cache_invalidate_on_update`、`cache_ttl`、`collect_logs`、`rate_limiting_interval`、`rate_limiting_limit` |
+| 第 4 步 改网关 | `PUT /accounts/<A>/ai-gateway/gateways/default`，同样整份覆盖，把 `GET` 回来的其它字段原样带上 |
+| 第 4 步 确认 key 存了 | `GET /accounts/<A>/ai-gateway/gateways/default/provider_configs`（只看有没有，看不到 key） |
+| 自定义 provider | `POST /accounts/<A>/ai-gateway/custom-providers`，一样要 `enable: true` |
+| 第 5 步 看 Secret | `GET /accounts/<A>/workers/scripts/companion-memory-proxy/secrets` |
+| 第 5 步 查权限组 | `GET /accounts/<A>/tokens/permission_groups`，按名字挑出第 5 步那几个 |
+| 第 5 步 建令牌并存进去 | `POST /accounts/<A>/tokens` 和上面那条 `PUT …/secrets`（名字 `CLOUDFLARE_API_TOKEN`）**写在同一次 execute 里**：令牌值只在代码里过一下，返回值里只写「已存」，别把令牌返回出来 |
+
+建令牌被拒（MCP 授权里常常没有建令牌这项）：别反复试，照第 5 步最后一段让用户在后台手动建。
+
+### 没有 MCP：装 `cf` 命令行
 
 ```bash
 node -v          # 要 22 或更高
@@ -69,9 +106,21 @@ cf auth login
 
 `whoami` 里有账号 ID（32 位），后面建令牌、配上游都要用。列出不止一个账号时，问用户用哪个，之后每条 `cf`、`wrangler` 命令前面都带上 `CLOUDFLARE_ACCOUNT_ID=<那个 ID>`。账号 ID 不是密钥，但也别写进仓库里的文件。
 
+登录完先试一条只读的：`cf ai-gateway gateways get default`（报「不存在」也算通，第 4 步会建）。
+
+**已经登录了，但一碰 AI Gateway 就 403（Authentication error）**：先别让用户反复重登，多半不是登录的问题。
+
+1. **旧令牌顶替了登录。** `cf` 用它找到的第一份凭证，环境变量 `CLOUDFLARE_API_TOKEN` 排在登录前面，当前目录 `.env` 里的 `CLOUDFLARE_API_TOKEN` 也算。跑 `env | grep CLOUDFLARE`，再看当前目录有没有 `.env`。有的话，那把令牌多半是以前给别的项目建的，没有 AI Gateway 权限：问过用户后在这个终端里 `unset CLOUDFLARE_API_TOKEN`，或者换个没有 `.env` 的目录跑 `cf`。`.env` 是用户的文件，别删、别改。
+2. **账号不对。** 对一下 `cf auth whoami` 的账号是不是用户要装 Aelios 的那个，不是就带上 `CLOUDFLARE_ACCOUNT_ID`。
+3. 上面都没问题，才 `cf auth login --force` 重新授权一次，请用户留意授权页面上有没有 AI Gateway。还不行就停下，把报错原文给用户；有 Cloudflare MCP 的话改走上面那条。
+
+**报 403，但报错里是 `CONNECT tunnel failed`、proxy、egress 之类**：不是 Cloudflare 拒的，是你所在的环境（云端沙盒、公司网络）连不出去，查令牌没用。换成 Cloudflare MCP，或者请用户在自己电脑的终端里跑。
+
 下面的命令默认 Worker 叫 `companion-memory-proxy`。用户改过名就换成他的。
 
 ## 2. 部署（没装过才做）
+
+走 MCP 的，照第 1 步请用户在后台导入 fork，下面的命令都跳过。
 
 ```bash
 gh repo fork Aelios-project/Aelios --clone --default-branch-only
@@ -264,7 +313,7 @@ curl -sS <Worker 地址>/<名字>/v1/chat/completions \
 有回复就通了。常见报错：
 
 - 提到 **Unified billing**：Cloudflare 没找到用户存的 key，在用它自己的计费。多半是 key 存错了厂商、别名不是 `default`，或者模型名前缀和厂商对不上。
-- **401、403**：令牌权限不够，或者网关认证没开。回第 4、5 步看。
+- **401、403**：令牌权限不够，或者网关认证没开。回第 4、5 步看。报错里是 `CONNECT tunnel failed`、proxy 之类的，是你的环境连不上 Worker，见第 1 步最后一段。
 - **Unknown gateway provider**：前缀写错了。自定义 provider 要写 `custom-<slug>/`，并且建的时候带了 `--enable true`。
 - **404**：多半是自定义 provider 的 `base_url` 多写了 `/v1`（AI Gateway 会自己接），或者少了那家地址里的一段路径。
 - **Upstream not configured**：第 6 步的 `upstream` 没填上。
