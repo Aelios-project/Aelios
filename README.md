@@ -14,7 +14,7 @@ your client  →  Aelios (identify, remember, recall)  →  the model
 
 ## Let an AI set it up
 
-With an AI that can run commands (Claude Code, Codex and the like), send it this:
+With an AI that can run commands (Claude Code, Codex and the like), or one connected to the Cloudflare MCP server, send it this:
 
 ```text
 Install and set up Aelios (my AI memory gateway) for me. Read https://raw.githubusercontent.com/Aelios-project/Aelios/main/docs/setup-with-ai.md first and follow it. When I need to click something in the browser or enter a key myself, stop and tell me where.

@@ -8,7 +8,7 @@
 
 ## 让 AI 帮你配
 
-用 Claude Code、Codex 这类能跑命令的 AI，把这段话发给它：
+用 Claude Code、Codex 这类能跑命令的 AI，或者连上了 Cloudflare MCP 的 AI，把这段话发给它：
 
 ```text
 帮我装好、配好 Aelios（我的 AI 记忆网关）。先读 https://raw.githubusercontent.com/Aelios-project/Aelios/main/docs/setup-with-ai.md ，照着做。需要我在浏览器里点、或者需要我自己填 key 的时候，停下来告诉我去哪儿填。
