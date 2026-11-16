@@ -169,6 +169,12 @@ export function nativeAnthropic(route: UpstreamRoute): boolean {
   return route.auth === "cf-aig" && /\/anthropic\/v1\/messages$/.test(route.url);
 }
 
+/** Known Messages routes that enforce prefix bindings and accept Anthropic's mismatch controls. */
+export function supportsThinkingBinding(route: UpstreamRoute): boolean {
+  return nativeAnthropic(route) || route.auth === "cf-aig" && /\/openrouter\/v1\/messages$/.test(route.url) &&
+    /^anthropic\/claude-/i.test(route.model);
+}
+
 /**
  * Whether the REST API turned the call down for a reason the provider endpoint does not have, so the same
  * request should go there instead: a model the catalog does not know (404 "Model not found"; or 400 "No such model",
@@ -232,7 +238,7 @@ export function prepareGatewayRequest(env: Env, config: GatewayConfig, identity:
   const clientBeta = headers.get("anthropic-beta");
   // The thinking-binding policy is Anthropic-line plumbing; a ChatGPT answer has no Anthropic signature to bind.
   const guessed = !chatgpt && isMainModel(identity, body.model) &&
-    applyThinkingPolicy(out, identity, protocol, headers, nativeAnthropic(route));
+    applyThinkingPolicy(out, identity, protocol, headers, supportsThinkingBinding(route));
   validateRequest(out, protocol, headers);
   sanitizeCacheControl(out, protocol);
   validateRequest(out, protocol, headers);

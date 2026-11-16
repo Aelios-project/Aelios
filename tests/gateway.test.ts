@@ -7,7 +7,7 @@ import worker from "../src/index";
 import { identityNamespace, identityReadNamespaces, invalidateSettingsCache, loadSettings, speakersForNamespace, validateConfig } from "../src/gateway/config";
 import { applySettings, describeSettings, validateSettings } from "../src/gateway/settings";
 import { appendMemory, classifyTurn, canonical } from "../src/gateway/protocol";
-import { anthropicClaude, catalogClaude, catalogUrl, forgetRestRefusals, nativeAnthropic, resolveUpstream, restRefused, routeFor, rejectedToolFields } from "../src/gateway/upstream";
+import { anthropicClaude, catalogClaude, catalogUrl, forgetRestRefusals, nativeAnthropic, supportsThinkingBinding, resolveUpstream, restRefused, routeFor, rejectedToolFields } from "../src/gateway/upstream";
 import { callOpenAICompat } from "../src/proxy/openaiAdapter";
 import { OutputCollector, observeResponse, persistExchange, prepareExchange, dispatchExchange } from "../src/gateway/record";
 import { getOrCreateConversation } from "../src/db/conversations";
@@ -997,6 +997,53 @@ test("default thinking mode keeps the tool loop after an injected turn working o
   for (const model of ["google-vertex-ai/claude-opus-5-5", "custom-navy/claude-opus-5-5", "openrouter/anthropic/claude-opus-5-5"]) {
     assert.equal(nativeAnthropic(routeFor(resolved, "messages", model)), false, model);
   }
+});
+
+test("auto covers OpenRouter Claude tool continuations without changing signed blocks or other routes", async () => {
+  const model = "openrouter/anthropic/claude-fable-5.2";
+  const plain: any = { ...identity(), models: [model] };
+  delete plain.anthropicThinking;
+  setConfig({ ...config([plain]), upstream: { address: "e".repeat(32) } });
+  precious("partner-a", "Cloudflare fan");
+  const user = { role: "user", content: "Cloudflare" };
+  const body = { model, max_tokens: 2048, thinking: { type: "adaptive" }, messages: [user] };
+  const first = await run("/v1/messages", body);
+  assert.equal(first.response.status, 200);
+  assert.equal(first.response.headers.get("x-aelios-memory"), "injected");
+  assert.match(calls[0].query.messages[0].content, /Cloudflare fan/);
+  assert.equal(calls[0].query.thinking.block_binding.prefix_mismatch_behavior, "drop_block");
+  const signed = { role: "assistant", content: [
+    { type: "thinking", thinking: "", signature: "opaque-bound-signature" },
+    { type: "tool_use", id: "r1", name: "ping", input: {} },
+    { type: "tool_use", id: "r2", name: "ping", input: {} }
+  ] };
+  const messages = [user, signed, { role: "user", content: [
+    { type: "tool_result", tool_use_id: "r1", content: "pong" },
+    { type: "tool_result", tool_use_id: "r2", content: "pong" }
+  ] }];
+  const next = await run("/v1/messages", { ...body, messages }, { "anthropic-beta": "interleaved-thinking-2025-05-14" });
+  assert.equal(next.response.status, 200);
+  assert.equal(next.response.headers.get("x-aelios-memory"), "skipped");
+  assert.deepEqual(calls[1].query.messages, messages);
+  assert.equal(calls[1].query.thinking.block_binding.prefix_mismatch_behavior, "drop_block");
+  assert.match(calls[1].headers["anthropic-beta"], /thinking-binding-controls-2026-08-01/);
+  assert.match(calls[1].headers["anthropic-beta"], /interleaved-thinking-2025-05-14/);
+  assert.match(calls[1].url, /\/openrouter\/v1\/messages$/);
+  const resolved = resolveUpstream({} as any, { version: 3, upstream: { address: "e".repeat(32) }, identities: [] });
+  assert.equal(supportsThinkingBinding(routeFor(resolved, "messages", model)), true);
+  for (const other of ["openrouter/google/gemini-4-hydrogen", "openrouter/deepseek/deepseek-chat", "google-vertex-ai/claude-opus-5-5", "custom-relay/anthropic/claude-opus-5-5"]) {
+    assert.equal(supportsThinkingBinding(routeFor(resolved, "messages", other)), false, other);
+  }
+  for (const mode of ["passthrough", "auto"]) {
+    setConfig({ ...config([{ ...plain, anthropicThinking: mode }]), upstream: { address: "e".repeat(32) } });
+    await run("/v1/messages", { ...body, messages, ...(mode === "auto" ? { thinking: { type: "disabled" } } : {}) });
+    assert.equal(calls.at(-1).query.thinking.block_binding, undefined);
+    assert.equal(calls.at(-1).headers["anthropic-beta"], undefined);
+  }
+  // Non-main models also keep the client's original thinking settings.
+  setConfig({ ...config([{ ...plain, models: ["other"] }]), upstream: { address: "e".repeat(32) } });
+  await run("/v1/messages", { ...body, messages });
+  assert.deepEqual(calls.at(-1).query.thinking, body.thinking);
 });
 
 test("a model that refuses the guessed thinking gets the request exactly as the client sent it", async () => {

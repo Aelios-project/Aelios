@@ -133,17 +133,17 @@ function carriesThinking(body: Body): boolean {
     message.content.some((block: unknown) => object(block) && ["thinking", "redacted_thinking"].includes(block.type)));
 }
 /**
- * The native Anthropic line binds every thinking block to the exact prefix it was produced after.
+ * Native Anthropic and Claude on OpenRouter bind thinking blocks to the prefix they were produced after.
  * Recall rides only on the newest user message, so the next request (a tool continuation, or any later
  * turn) no longer carries it and the upstream answers 400 "The block is bound to a different conversation".
- * `auto` (the default) asks that line to drop mismatched blocks instead; other lines are left alone.
+ * `auto` (the default) asks supported routes to drop mismatched blocks; other lines are left alone.
  * Returns true when auto had to guess a thinking type the client never sent.
  */
 export function applyThinkingPolicy(body: Body, identity: Identity, protocol: Protocol, headers: Headers,
-  nativeAnthropic = false): boolean {
+  supportsBinding = false): boolean {
   const mode = identity.anthropicThinking ?? "auto";
   if (protocol !== "messages" || mode === "passthrough" || body.thinking?.type === "disabled") return false;
-  if (mode === "auto" && !nativeAnthropic) return false;
+  if (mode === "auto" && !supportsBinding) return false;
   // Invalid client values must reach validation, not be coerced into adaptive.
   if (body.thinking !== undefined && (!object(body.thinking) || !["enabled", "adaptive"].includes(body.thinking.type))) return false;
   // Whether to think is the client's call. Left unset, only signed history shows the model already
