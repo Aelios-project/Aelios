@@ -626,7 +626,10 @@ async function callTool(
         console.warn("wake_up: list notebook failed", error);
         return [] as NotebookPageSummary[];
       }),
-      readHandoff(env.DB, namespace)
+      readHandoff(env.DB, namespace).catch((error) => {
+        console.warn("wake_up: read handoff failed", error);
+        return null;
+      })
     ]);
     if (pkg.precious.length > 0) {
       ctx.waitUntil(markPreciousInjected(env.DB, { namespace, ids: pkg.precious.map((p) => p.id) }));
@@ -634,7 +637,7 @@ async function callTool(
     // 置顶优先、再按重要度的前几条：官端用户日记常是空的，开场至少知道这个人是谁。
     const core = corePage.records.map((record) => ({ id: record.id, type: record.type, content: record.content }));
     const notebook = notebookNamesLine(pages);
-    return textToolResult({ data: { how_to_use: MEMORY_GUIDE, core, ...pkg, ...(notebook ? { notebook } : {}), ...(handoff.content !== null ? { handoff } : {}) } });
+    return textToolResult({ data: { how_to_use: MEMORY_GUIDE, core, ...pkg, ...(notebook ? { notebook } : {}), ...(handoff && handoff.content !== null ? { handoff } : {}) } });
   }
 
   if (name === "handoff") {

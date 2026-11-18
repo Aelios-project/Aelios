@@ -124,6 +124,38 @@ test("only MCP wake_up returns the handoff; the existing REST boot package stays
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM memories").get()?.n, 0);
 });
 
+test("wake_up still returns its core pack when the handoff migration is missing", async () => {
+  sqlite.exec("DROP TABLE current_handoffs");
+  const result = await rpc("wake_up");
+  assert.equal(result.isError, undefined);
+  assert.ok(Array.isArray(result.structuredContent.data.core));
+  assert.ok(result.structuredContent.data.how_to_use);
+  assert.equal("handoff" in result.structuredContent.data, false);
+  // Explicit handoff operations still report the problem instead of pretending to save.
+  assert.equal((await rpc("handoff", { action: "read" })).isError, true);
+});
+
+test("overlong Resident letters keep their raw receipt and leave the current letter unchanged", async () => {
+  await save("prior", 0);
+  const text = "长".repeat(20001);
+  const result = await ingest("overlong", Date.now() - 1000, text);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.data.message_ids.length, 1);
+  const raw = sqlite.prepare("SELECT content FROM messages WHERE id = ?").get(result.body.data.message_ids[0]);
+  assert.equal(raw?.content, `（交接信）${text}`);
+  assert.equal((await get()).content, "prior");
+  assert.equal((await get()).revision, 1);
+  // The boundary counts code points, including supplementary characters, not UTF-16 units.
+  const boundary = "🌟".repeat(20000);
+  assert.equal((await ingest("boundary", Date.now() - 500, boundary, "other")).status, 200);
+  assert.equal((await get("other")).content, boundary);
+  const tooLong = `${boundary}🌟`;
+  const skipped = await ingest("overlong-unicode", Date.now() - 250, tooLong, "empty");
+  assert.equal(skipped.status, 200);
+  assert.equal((await get("empty")).revision, 0);
+  assert.equal(sqlite.prepare("SELECT content FROM messages WHERE id = ?").get(skipped.body.data.message_ids[0])?.content, `（交接信）${tooLong}`);
+});
+
 test("Resident delivery updates current handoff without changing its normal receipt", async () => {
   const at = Date.now() - 20000;
   const result = await ingest("letter-1", at);

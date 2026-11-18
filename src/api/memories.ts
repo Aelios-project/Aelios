@@ -1,5 +1,5 @@
 import { authenticate } from "../auth/apiKey";
-import { HandoffError, residentHandoffMetadata, saveResidentHandoff, validateHandoff } from "../db/v2/handoff";
+import { HANDOFF_MAX, HandoffError, residentHandoffMetadata, saveResidentHandoff, validateHandoff } from "../db/v2/handoff";
 import { requireScope } from "../auth/scopes";
 import { getOrCreateConversation } from "../db/conversations";
 import { createMemory, getMemoryById, listMemoriesPage, softDeleteMemory, updateMemory } from "../db/memories";
@@ -394,7 +394,14 @@ async function handleIngestMemories(
         throw new HandoffError("handoff metadata is only valid for one Resident assistant letter");
       }
       handoff = residentHandoffMetadata(body.handoff);
-      handoffContent = validateHandoff(messages[0].content.replace(/^（交接信）/, ""));
+      handoffContent = messages[0].content.replace(/^（交接信）/, "");
+      // The current-letter limit must not prevent the original letter from being ingested.
+      if (Array.from(handoffContent).length > HANDOFF_MAX) {
+        handoff = undefined;
+        console.warn("Resident letter exceeds current handoff limit; preserving raw ingest only");
+      } else {
+        validateHandoff(handoffContent);
+      }
     } catch (error) {
       if (error instanceof HandoffError) return openAiError(error.message, error.status);
       throw error;
