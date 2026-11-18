@@ -62,12 +62,13 @@ export async function listChatGptModels(env: Env, options: { fresh?: boolean; si
  * One POST to /responses. A 401 gets a single forced refresh and one more try; a token that was refreshed a
  * moment ago is not refreshed again, so a revoked grant cannot turn requests into a refresh storm.
  */
-export async function postResponses(env: Env, body: Body, signal?: AbortSignal, waitUntil?: WaitUntil): Promise<Response> {
+export async function postResponses(env: Env, body: Body, signal?: AbortSignal, waitUntil?: WaitUntil, sessionId?: string): Promise<Response> {
   const send = async (force: boolean) => {
     const grant = await getAccessGrant(env, { force, waitUntil });
     return fetch(RESPONSES_URL, {
       method: "POST", redirect: "manual", signal,
-      headers: { authorization: `Bearer ${grant.accessToken}`, "content-type": "application/json", accept: "text/event-stream" },
+      headers: { authorization: `Bearer ${grant.accessToken}`, "content-type": "application/json", accept: "text/event-stream",
+        ...(sessionId ? { "session-id": sessionId } : {}) },
       body: JSON.stringify(body)
     });
   };
