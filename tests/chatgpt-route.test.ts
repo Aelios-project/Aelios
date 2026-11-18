@@ -234,6 +234,28 @@ test("chat requests reasoning summaries when effort is enabled, including upstre
   assert.equal(openai().at(-1)?.body.reasoning, undefined);
 });
 
+test("GPT-6.2 Chat requests summaries with default effort, while explicit controls and native Responses remain unchanged", async () => {
+  await signIn();
+  answer = body => sseResponse([
+    ...(body.reasoning?.summary === "auto" ? [{ type: "response.reasoning_summary_text.delta", output_index: 1, delta: "Summary." },
+      { type: "response.output_item.done", output_index: 1, item: { type: "reasoning", summary: [{ type: "summary_text", text: "Summary." }] } }] : []),
+    ...textEvents("ok")
+  ]);
+  for (const model of ["chatgpt/gpt-6.2-sol", "chatgpt/gpt-6.2-astra"]) {
+    const streamed = chunks(await (await chat({ model, stream: true })).text());
+    assert.equal(streamed.map(part => part.choices[0]?.delta?.reasoning_content ?? "").join(""), "Summary.");
+    assert.deepEqual(openai().at(-1)?.body.reasoning, { summary: "auto" });
+    const result = await (await chat({ model, stream: false })).json() as any;
+    assert.equal(result.choices[0].message.reasoning_content, "Summary.");
+    for (const effort of ["none", "minimal"]) {
+      await (await chat({ model, stream: false, reasoning_effort: effort })).text();
+      assert.deepEqual(openai().at(-1)?.body.reasoning, { effort });
+    }
+  }
+  const native = toChatGptRequest({ input: "hi", reasoning: { effort: "low" } }, "responses", "gpt-6.2-sol").body;
+  assert.deepEqual(native.reasoning, { effort: "low" });
+});
+
 test("GPT-6.2 translated system prompts lead the cacheable input; native Responses instructions remain request-scoped", () => {
   for (const slug of ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.2-sol-2026-11-18"]) {
     for (const protocol of ["chat", "messages"] as const) {

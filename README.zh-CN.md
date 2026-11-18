@@ -181,7 +181,7 @@ GitHub 不会自己更新 Fork。有新版本时：
 
 要知道的：它只连你自己的账号，别把这条线路分给别人。用量计入你套餐的限额（ChatGPT 设置 → Usage 里管）。chat/completions、Anthropic messages、responses 三种格式的客户端都能用（前两种会翻成 Responses 再翻回来，Claude 那种带思考块的也行）；OpenAI 的套餐线路不收图片生成、文件搜索、代码解释器、MCP 这类托管工具，函数工具和联网搜索可以。不用加新的 Secret：token 加密存在 D1 里，密钥由 `CHATBOX_API_KEY` 派生，换了这把 key 就要重新登录。`npm run deploy` 会把新迁移一并应用。夜间任务也能用套餐：在设置里把 Dream 用的模型（日记模型也行）填成 `chatgpt/<模型名>`。它们一晚上会发好几次请求，都算在套餐额度里；哪晚额度用完，这些任务就像别的模型报错一样失败，记忆库本身不受影响。
 
-使用 GPT-6.2 时，Aelios 会把 Chat 和 Messages 客户端的系统提示放到 `input` 开头的 developer 消息里，使其具备[提示词缓存](https://developers.openai.com/api/docs/guides/prompt-caching)资格。原生 Responses 请求保留客户端自己的 `instructions` 位置；6.2 的顶层 instructions 位于可缓存前缀之外。Responses 客户端可以传入 `prompt_cache_options`（包括用于[缓存诊断](https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics)的 `comparison_response_id`）和内容块上的缓存断点。Chat 请求的 reasoning effort 高于 `minimal` 时也会请求思考摘要；摘要是否返回、缓存是否复用取决于上游模型和套餐。Chat 流式请求要接收用量，请传 `stream_options: { "include_usage": true }`。上游报告的缓存写入会保留在 Chat 的 `prompt_tokens_details` 和 Messages 的 `cache_creation_input_tokens` 中。
+使用 GPT-6.2 时，Aelios 会把 Chat 和 Messages 客户端的系统提示放到 `input` 开头的 developer 消息里，使其具备[提示词缓存](https://developers.openai.com/api/docs/guides/prompt-caching)资格。原生 Responses 请求保留客户端自己的 `instructions` 位置；6.2 的顶层 instructions 位于可缓存前缀之外。Responses 客户端可以传入 `prompt_cache_options`（包括用于[缓存诊断](https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics)的 `comparison_response_id`）和内容块上的缓存断点。Chat 请求的 reasoning effort 高于 `minimal` 时也会请求思考摘要；GPT-6.2 在省略 effort 时同样请求摘要，保留模型自己的默认思考强度；摘要是否返回、缓存是否复用取决于上游模型和套餐。Chat 流式请求要接收用量，请传 `stream_options: { "include_usage": true }`。上游报告的缓存写入会保留在 Chat 的 `prompt_tokens_details` 和 Messages 的 `cache_creation_input_tokens` 中。
 
 **在 Claude 官方 App（网页、手机）、Claude Code、Codex 里用 MCP 记忆**
 
