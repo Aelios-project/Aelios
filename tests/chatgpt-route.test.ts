@@ -954,6 +954,33 @@ test("memory recall reaches ChatGPT on the last user message in all three protoc
   }
 });
 
+test("GPT-6.2 Chat recall stays outside input and leaves the next turn's prefix intact", async () => {
+  await signIn();
+  const model = "chatgpt/gpt-6.2-sol";
+  setConfig(true, [model]);
+  precious("partner-a", "喜欢 Cloudflare");
+  precious("partner-b", "other identity private memory");
+  const history = [{ role: "system", content: "Stable policy." }, { role: "user", content: "我们喜欢什么？" }];
+  const first = await chat({ model, stream: false, messages: history });
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get("x-aelios-memory"), "injected");
+  const initial = openai().at(-1)?.body;
+  assert.ok(initial);
+  assert.deepEqual(initial.input, [{ role: "developer", content: "Stable policy." }, history[1]]);
+  assert.match(initial.instructions, /喜欢 Cloudflare/);
+  assert.match(initial.instructions, /reference data/);
+  assert.doesNotMatch(JSON.stringify(initial), /other identity private memory/);
+  await first.json();
+  await Promise.all(pending);
+
+  const messages = [...history, { role: "assistant", content: "Hello there" }, { role: "user", content: "继续。" }];
+  const next = await chat({ model, stream: false, messages });
+  assert.equal(next.status, 200);
+  assert.deepEqual(openai().at(-1)?.body.input.slice(0, initial.input.length), initial.input);
+  await next.json();
+  await Promise.all(pending);
+});
+
 test("only a main model carries memory: the same question on a model outside the list is sent as it came", async () => {
   await signIn();
   precious("partner-a", "喜欢 Cloudflare");
