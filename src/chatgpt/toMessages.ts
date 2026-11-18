@@ -27,8 +27,9 @@ export function messagesUsage(usage: unknown): Body {
   const source = object(usage) ? usage : {};
   const input = Number(source.input_tokens) || 0;
   const cached = Math.min(input, Number(source.input_tokens_details?.cached_tokens) || 0);
-  return { input_tokens: input - cached, output_tokens: Number(source.output_tokens) || 0,
-    cache_creation_input_tokens: 0, cache_read_input_tokens: cached };
+  const written = Math.min(input - cached, Number(source.input_tokens_details?.cache_write_tokens) || 0);
+  return { input_tokens: input - cached - written, output_tokens: Number(source.output_tokens) || 0,
+    cache_creation_input_tokens: written, cache_read_input_tokens: cached };
 }
 const messageId = (response: Body | undefined) => `msg_${String(response?.id || crypto.randomUUID()).replace(/^resp_/, "").replace(/-/g, "")}`;
 function parseInput(args: unknown): unknown {

@@ -169,7 +169,10 @@ function chatToResponses(payload: Body, removed: string[]): Body {
       ...(description !== undefined ? { description } : {}) } };
   }
   if (typeof payload.verbosity === "string") out.text = { ...out.text, verbosity: payload.verbosity };
-  if (typeof payload.reasoning_effort === "string") out.reasoning = { effort: payload.reasoning_effort };
+  if (typeof payload.reasoning_effort === "string") {
+    out.reasoning = { effort: payload.reasoning_effort,
+      ...(!["none", "minimal"].includes(payload.reasoning_effort) ? { summary: "auto" } : {}) };
+  }
   if (typeof payload.prompt_cache_key === "string") out.prompt_cache_key = payload.prompt_cache_key;
 
   for (const field of CHAT_DROPPED) if (payload[field] !== undefined) removed.push(field);
@@ -347,6 +350,14 @@ export function toChatGptRequest(payload: Body, protocol: Protocol, slug: string
   const removed: string[] = [];
   const body = protocol === "chat" ? chatToResponses(payload, removed)
     : protocol === "messages" ? messagesToResponses(payload, removed) : cleanResponses(payload, removed);
+  // GPT-6.2 appends top-level instructions after input, outside cacheable prefixes.
+  // Preserve reusable system guidance from translated protocols as a leading developer message.
+  // Native Responses callers retain control over their own instructions and cache boundaries.
+  // https://developers.openai.com/api/docs/guides/prompt-caching
+  if (protocol !== "responses" && /^gpt-6\.2(?:-|$)/.test(slug) && typeof body.instructions === "string") {
+    body.input.unshift({ role: "developer", content: body.instructions });
+    delete body.instructions;
+  }
   body.model = slug;
   body.store = false;
   body.stream = true;
