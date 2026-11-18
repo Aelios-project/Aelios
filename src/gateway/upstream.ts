@@ -2,6 +2,7 @@ import type { Env } from "../types";
 import { GATEWAY_HOST_RE, gatewayInAddress, identityNamespace, isMainModel, PATHS, stripAddress, type GatewayConfig, type Identity, type Protocol } from "./config";
 import { appendMemory, applyThinkingPolicy, PROTECTED_TOOL_FIELDS, rejectedFieldNames, sanitizeCacheControl, STRIPPABLE_TOOL_FIELDS, stripToolField, type Body } from "./protocol";
 import { normalizeRequest, validateRequest } from "./request";
+import { gptRecallPlacement, placeGptRecall } from "./gpt-recall";
 import { MODEL_PREFIX, RESPONSES_URL } from "../chatgpt/client";
 import { callChatGptUpstream } from "../chatgpt/upstream";
 import { toChatGptRequest } from "../chatgpt/toResponses";
@@ -282,7 +283,11 @@ export async function callGatewayUpstream(env: Env, protocol: Protocol, original
   prepared: PreparedRequest, payload: Body, ctx?: ExecutionContext, recall = ""): Promise<Response> {
   let { route } = prepared;
   const { headers } = prepared;
-  const body = recall && route.auth !== "chatgpt" ? appendMemory(payload, protocol, recall) : payload;
+  let body = payload;
+  if (recall && route.auth !== "chatgpt") {
+    const placement = gptRecallPlacement(prepared.requestedModel, protocol, /^https:\/\/openrouter\.ai\//i.test(route.url));
+    body = placement ? placeGptRecall(payload, protocol, placement, recall) : appendMemory(payload, protocol, recall);
+  }
   validateRequest(body, protocol, headers);
   if (route.auth === "chatgpt") {
     // Codex uses a stable session-id header together with the body cache key.

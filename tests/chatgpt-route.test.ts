@@ -981,6 +981,26 @@ test("GPT-6.2 Chat recall stays outside input and leaves the next turn's prefix 
   await Promise.all(pending);
 });
 
+test("older ChatGPT GPT models keep their leading instructions and get recall after the user input", async () => {
+  await signIn();
+  const model = "chatgpt/gpt-6.1-sol";
+  setConfig(true, [model]);
+  precious("partner-a", "喜欢 Cloudflare");
+  const reply = await chat({ model, stream: false, messages: [{ role: "system", content: "Stable policy." },
+    { role: "user", content: "我们喜欢什么？" }] });
+  assert.equal(reply.status, 200);
+  assert.equal(reply.headers.get("x-aelios-memory"), "injected");
+  const call = openai().at(-1);
+  assert.ok(call);
+  const { body } = call;
+  assert.equal(body.instructions, "Stable policy.");
+  assert.deepEqual(body.input[0], { role: "user", content: "我们喜欢什么？" });
+  assert.equal(body.input[1].role, "developer");
+  assert.match(body.input[1].content, /喜欢 Cloudflare/);
+  await reply.json();
+  await Promise.all(pending);
+});
+
 test("only a main model carries memory: the same question on a model outside the list is sent as it came", async () => {
   await signIn();
   precious("partner-a", "喜欢 Cloudflare");

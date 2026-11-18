@@ -117,6 +117,72 @@ test("migrations, native chat recall, namespace isolation, original text and Que
   assert.equal(queue[1].kind, "tool"); assert.equal(queue[1].userText, "");
 });
 
+test("GPT Chat recall preserves each original message across OpenAI, Cloudflare and OpenRouter", async () => {
+  const account = "d".repeat(32);
+  const cases = [
+    { address: "https://api.openai.com/v1", model: "gpt-6.2-sol", role: "developer", url: "https://api.openai.com/v1/chat/completions" },
+    { address: account, model: "openai/gpt-4o-mini", role: "system", url: `https://gateway.ai.cloudflare.com/v1/${account}/default/compat/chat/completions` },
+    { address: account, model: "openrouter/openai/gpt-6.1-sol:floor", role: "developer", url: `https://gateway.ai.cloudflare.com/v1/${account}/default/compat/chat/completions` },
+    { address: "https://openrouter.ai/api/v1", model: "openai/gpt-5-mini", role: "developer", url: "https://openrouter.ai/api/v1/chat/completions" }
+  ];
+  precious("partner-a", "喜欢 Cloudflare");
+  precious("partner-b", "Cloudflare private memory from a different identity");
+  const history = [{ role: "system", content: "Stable policy." }, { role: "user", content: [{ type: "text", text: "我们喜欢什么？" }] }];
+  for (const { address, model, role, url } of cases) {
+    setConfig({ ...config([{ ...identity(), models: [model] }]), upstream: { address } });
+    const first = await run("/v1/chat/completions", { model, messages: history, prompt_cache_key: "client-key" });
+    assert.equal(first.response.status, 200);
+    assert.equal(first.response.headers.get("x-aelios-memory"), "injected");
+    const wire = calls.at(-1);
+    assert.equal(wire.url, url);
+    assert.equal(wire.query.model, model);
+    assert.equal(wire.query.prompt_cache_key, "client-key");
+    assert.deepEqual(wire.query.messages.slice(0, -1), history);
+    assert.equal(wire.query.messages.at(-1).role, role);
+    assert.match(wire.query.messages.at(-1).content, /喜欢 Cloudflare/);
+    assert.doesNotMatch(JSON.stringify(wire.query), /different identity/);
+    assert.equal(queue.at(-1).userText, "我们喜欢什么？");
+
+    const next = [...history, { role: "assistant", content: "Hello." }, { role: "user", content: "继续。" }];
+    await run("/v1/chat/completions", { model, messages: next });
+    assert.deepEqual(calls.at(-1).query.messages.slice(0, next.length), next);
+  }
+});
+
+test("GPT Responses uses the model's instruction placement without rewriting history", async () => {
+  const account = "d".repeat(32);
+  const cases = [
+    { address: "https://api.openai.com/v1", model: "gpt-6.2-sol", instructionsAfter: true },
+    { address: account, model: "openai/gpt-6.2-astra", instructionsAfter: true },
+    { address: account, model: "openai/gpt-5-mini", instructionsAfter: false },
+    { address: account, model: "openrouter/openai/gpt-6.2-sol", instructionsAfter: false },
+    { address: "https://openrouter.ai/api/v1", model: "openai/gpt-6.2-sol", instructionsAfter: false }
+  ];
+  precious("partner-a", "喜欢 Cloudflare");
+  const instructions = "Caller instructions.";
+  const input = [{ type: "message", role: "developer", content: "Stable policy." },
+    { type: "message", role: "user", content: [{ type: "input_text", text: "我们喜欢什么？", prompt_cache_breakpoint: { mode: "explicit" } }] }];
+  for (const { address, model, instructionsAfter } of cases) {
+    setConfig({ ...config([{ ...identity(), models: [model] }]), upstream: { address } });
+    const { response } = await run("/v1/responses", { model, input, instructions });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("x-aelios-memory"), "injected");
+    const { query } = calls.at(-1);
+    assert.deepEqual(query.input.slice(0, input.length), input);
+    assert.equal(query.store, false);
+    if (instructionsAfter) {
+      assert.equal(query.input.length, input.length);
+      assert.ok(query.instructions.startsWith(`${instructions}\n\n`));
+      assert.match(query.instructions, /喜欢 Cloudflare/);
+    } else {
+      assert.equal(query.instructions, instructions);
+      assert.equal(query.input.length, input.length + 1);
+      assert.equal(query.input.at(-1).role, "developer");
+      assert.match(query.input.at(-1).content, /喜欢 Cloudflare/);
+    }
+  }
+});
+
 // message_id is UNINDEXED in FTS5: `DELETE FROM message_fts WHERE message_id = ?` reads the whole
 // table, and D1 bills every row. Recording a turn must not pay that on every request.
 function spySql(): string[] {
