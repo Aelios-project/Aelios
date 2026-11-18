@@ -12,7 +12,7 @@ import { nowIso } from "../utils/time";
 import { cleanMessageText } from "../utils/sanitize";
 import { codingClient, codingSpeech, recallWords, stripCodeBlocks } from "./coding";
 import { findIdentity, identityNamespace, identityReadNamespaces, isMainModel, loadConfig, type GatewayConfig, type Identity, type Protocol } from "./config";
-import { appendMemory, classifyTurn, hasServerState, inputItems, recentHumanTexts, validateBody, visibleText, type Body, type Turn } from "./protocol";
+import { classifyTurn, hasServerState, inputItems, recentHumanTexts, validateBody, visibleText, type Body, type Turn } from "./protocol";
 import { RequestContractError } from "./request";
 import { dispatchExchange, persistExchange, persistHumanUtterance, observeResponse, prepareExchange, settleExchange, type GatewayExchange, type OutputCollector } from "./record";
 import { callGatewayUpstream, prepareGatewayRequest, UpstreamRouteError, type PreparedRequest } from "./upstream";
@@ -308,10 +308,9 @@ export async function handleGateway(request: Request, env: Env, ctx: ExecutionCo
   const { memory: memoryStatus, patch, remember: rememberStatus } = main
     ? await rememberAndRecall(env, ctx, identity, protocol, body, turn, exchange, coding, recallId)
     : { memory: "off", patch: "", remember: "none" };
-  const payload = appendMemory(prepared.body, protocol, patch);
-  if (protocol === "responses" && main) payload.store = false;
+  if (protocol === "responses" && main) prepared.body.store = false;
   try {
-    const upstream = await callGatewayUpstream(env, protocol, request, prepared, payload, ctx);
+    const upstream = await callGatewayUpstream(env, protocol, request, prepared, prepared.body, ctx, patch);
     const headers = new Headers(upstream.headers);
     headers.set("x-aelios-identity", identity.slug);
     headers.set("x-aelios-memory", memoryStatus);

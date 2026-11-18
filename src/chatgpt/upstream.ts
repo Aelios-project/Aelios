@@ -19,6 +19,7 @@ export interface ChatGptTarget {
   removed: string[];
   /** Gateway-scoped opaque cache affinity, shared by the body key and session-id header. */
   sessionId?: string;
+  recall?: string;
 }
 
 /**
@@ -56,7 +57,7 @@ export async function callChatGptUpstream(env: Env, protocol: Protocol, signal: 
   const shape = shapeOf(protocol);
   const wantsStream = payload.stream === true;
   const includeUsage = payload.stream_options?.include_usage === true;
-  const converted = toChatGptRequest(payload, protocol, target.model);
+  const converted = toChatGptRequest(payload, protocol, target.model, target.recall);
   if (target.sessionId) converted.body.prompt_cache_key = target.sessionId;
   target.removed.push(...converted.removed);
   for (const field of learnedFor(target.model)) {

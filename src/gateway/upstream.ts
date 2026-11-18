@@ -1,6 +1,6 @@
 import type { Env } from "../types";
 import { GATEWAY_HOST_RE, gatewayInAddress, identityNamespace, isMainModel, PATHS, stripAddress, type GatewayConfig, type Identity, type Protocol } from "./config";
-import { applyThinkingPolicy, PROTECTED_TOOL_FIELDS, rejectedFieldNames, sanitizeCacheControl, STRIPPABLE_TOOL_FIELDS, stripToolField, type Body } from "./protocol";
+import { appendMemory, applyThinkingPolicy, PROTECTED_TOOL_FIELDS, rejectedFieldNames, sanitizeCacheControl, STRIPPABLE_TOOL_FIELDS, stripToolField, type Body } from "./protocol";
 import { normalizeRequest, validateRequest } from "./request";
 import { MODEL_PREFIX, RESPONSES_URL } from "../chatgpt/client";
 import { callChatGptUpstream } from "../chatgpt/upstream";
@@ -279,10 +279,10 @@ function preStrippedToolFields(env: Env): string[] {
 }
 
 export async function callGatewayUpstream(env: Env, protocol: Protocol, original: Request,
-  prepared: PreparedRequest, body: Body, ctx?: ExecutionContext): Promise<Response> {
+  prepared: PreparedRequest, payload: Body, ctx?: ExecutionContext, recall = ""): Promise<Response> {
   let { route } = prepared;
   const { headers } = prepared;
-  // Check the actual wire payload, including the gateway's own modifications.
+  const body = recall && route.auth !== "chatgpt" ? appendMemory(payload, protocol, recall) : payload;
   validateRequest(body, protocol, headers);
   if (route.auth === "chatgpt") {
     // Codex uses a stable session-id header together with the body cache key.
@@ -291,7 +291,7 @@ export async function callGatewayUpstream(env: Env, protocol: Protocol, original
     const sessionId = prepared.chatgptScope && typeof hint === "string" && hint.trim()
       ? await sha256Hex(JSON.stringify([prepared.chatgptScope, hint])) : undefined;
     return callChatGptUpstream(env, protocol, original.signal,
-      { model: route.model, requestedModel: prepared.requestedModel, removed: prepared.removed, sessionId }, body,
+      { model: route.model, requestedModel: prepared.requestedModel, removed: prepared.removed, sessionId, recall }, body,
       ctx ? promise => ctx.waitUntil(promise) : undefined);
   }
   const learned = rejectedToolFields.get(route.url);
