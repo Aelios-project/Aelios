@@ -270,7 +270,8 @@ CF 上游：messages 上的 Claude（`anthropic/…`）走 Cloudflare 的 AI RES
 | POST | `/v1/memory/recall` | 动态召回（hook 优先用这个） |
 | POST | `/v1/search/memories` | 原始搜索（不记账） |
 | POST | `/v1/ingest/messages` | 写入原始聊天 |
-| GET | `/v1/memory_boot` | 冷启动包 |
+| GET | `/v1/memory_boot` | 冷启动包（不含当前交接信） |
+| GET / PUT / DELETE | `/v1/handoff` | 当前交接信；写入和删除须带 GET 读到的 `expected_revision` |
 | GET | `/v1/diary` `/v1/diary/recent` | 日记 |
 | POST | `/admin/diary-rewrite` | 用当天聊天原文重写一篇日记：`{"date":"YYYY-MM-DD"}` |
 | GET | `/v1/dream/status` | 最近 7 天的 Dream 运行记录、正在跑的任务、游标 |
@@ -287,7 +288,13 @@ CF 上游：messages 上的 Claude（`anthropic/…`）走 Cloudflare 的 AI RES
 
 ### MCP 工具
 
-`wake_up` `recall` `remember` `keep_moment` `forget` `learn_word` `read_diary` `log_conversation` `list_memories` `notebook`
+`wake_up` `recall` `remember` `keep_moment` `forget` `learn_word` `read_diary` `log_conversation` `list_memories` `handoff` `notebook`
+
+`handoff` 读、写、删当前空间唯一一封交接信（最多 20000 字符），工具自带写作提示词；人类也能在「记忆库 → 交接信」里编辑。只有明确调用 MCP `wake_up` 时，返回包才附上当前信；普通模型请求和 REST `/v1/memory_boot` 不会自动注入。当前信独立存储，不参与召回和夜间记忆提取。
+
+修改前先读：`GET /v1/handoff?namespace=…` 返回 `{ data: { content, revision, source, updated_at }, writing_guide }`。PUT 的 JSON 为 `{ "content": "…", "expected_revision": 0, "namespace": "…" }`；DELETE 的 JSON 带版本号和可选空间。版本号使用刚读到的值（从未写过才是 0）；版本过期返回 409，页面保留草稿。绑定固定空间的钥匙仍只能操作自己的空间。
+
+新版 Resident 自动投递交接信时带固定投递 ID 和原始生成时间。重试、乱序旧信不能覆盖更新的信或之后的手动修改与删除。旧版 Resident 仍按原方式投递聊天原文，不更新当前信；旧版 Aelios 忽略新版投递附带的信息。升级时先按正常 `npm run deploy` 流程更新 Aelios（会应用 `0021_current_handoff.sql` 迁移），再更新 Resident。
 
 `notebook` 是小本本：助手按页名自己读、自己改的笔记，比如备考进度。不会被自动召回，夜里不会被改写，也不会过期；在「记忆库 → 小本本」能看、能改、能删、能整本清空。
 

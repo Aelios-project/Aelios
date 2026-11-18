@@ -261,7 +261,8 @@ Configuration has three layers, all under `/admin` Settings: upstream, assistant
 | POST | `/v1/memory/recall` | Dynamic recall (preferred by hooks) |
 | POST | `/v1/search/memories` | Raw search (unmetered) |
 | POST | `/v1/ingest/messages` | Ingest raw chats |
-| GET | `/v1/memory_boot` | Cold-start pack |
+| GET | `/v1/memory_boot` | Cold-start pack (without the current handoff) |
+| GET / PUT / DELETE | `/v1/handoff` | Current handoff letter; writes and deletes require `expected_revision` from GET |
 | GET | `/v1/diary`, `/v1/diary/recent` | Diary |
 | POST | `/admin/diary-rewrite` | Rewrite one diary entry from that day's chat: `{"date":"YYYY-MM-DD"}` |
 | GET | `/v1/dream/status` | Dream runs from the last 7 days, the active task, cursors |
@@ -278,7 +279,13 @@ Everything except `/health` and `/admin` requires `Authorization: Bearer <key>`.
 
 ### MCP tools
 
-`wake_up` `recall` `remember` `keep_moment` `forget` `learn_word` `read_diary` `log_conversation` `list_memories` `notebook`
+`wake_up` `recall` `remember` `keep_moment` `forget` `learn_word` `read_diary` `log_conversation` `list_memories` `handoff` `notebook`
+
+`handoff` reads, writes or deletes one current letter per memory space (up to 20000 characters), with writing guidance built into the tool. Humans can also edit it under Memories → Handoff. Only an explicit MCP `wake_up` call includes the current letter; ordinary model requests and REST `/v1/memory_boot` do not inject it. The letter is stored separately from recall and nightly memory extraction.
+
+Read before editing: `GET /v1/handoff?namespace=…` returns `{ data: { content, revision, source, updated_at }, writing_guide }`. PUT takes `{ "content": "…", "expected_revision": 0, "namespace": "…" }`; DELETE takes the revision and optional namespace in a JSON body. Use the revision just read (0 only if never written); a stale revision returns 409 without replacing your draft. Fixed-namespace keys remain bound to their space.
+
+Updated Resident versions automatically publish their letters using a stable delivery ID and original generation time. Retries and older letters cannot overwrite a newer letter or a later manual edit/deletion. Older Residents keep their existing chat-ingest behavior without updating this slot; older Aelios versions ignore the new delivery metadata. Upgrade Aelios first with the normal `npm run deploy` flow, which applies migration `0021_current_handoff.sql`, then Resident.
 
 `notebook` keeps named pages the assistants read and rewrite themselves, such as progress on a long task. Pages are never recalled automatically, changed overnight or expired; you can edit, delete or clear them under Memories → Notebook.
 

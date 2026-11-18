@@ -31,6 +31,7 @@ import {
 } from "./api/memories";
 import { handleMcp } from "./api/mcp";
 import { handleNotebookApi } from "./api/notebook";
+import { handleHandoffApi } from "./api/handoff";
 import { handleRawMessage } from "./api/raw";
 import { handleImportApi } from "./api/transfer";
 import { handleModelCatalog, handleModelTest, handleModels } from "./api/models";
@@ -203,6 +204,8 @@ export default {
     if (url.pathname === "/v1/glossary" || url.pathname.startsWith("/v1/glossary/")) {
       return handleGlossaryApi(request, env);
     }
+
+    if (url.pathname === "/v1/handoff") return handleHandoffApi(request, env);
 
     if (url.pathname === "/v1/notebook" || url.pathname.startsWith("/v1/notebook/")) {
       return handleNotebookApi(request, env);
