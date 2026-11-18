@@ -52,7 +52,11 @@ export function chatUsage(usage: unknown): Body | undefined {
   const completion = Number(usage.output_tokens) || 0;
   return {
     prompt_tokens: prompt, completion_tokens: completion, total_tokens: Number(usage.total_tokens) || prompt + completion,
-    prompt_tokens_details: { cached_tokens: Number(usage.input_tokens_details?.cached_tokens) || 0 },
+    prompt_tokens_details: { cached_tokens: Number(usage.input_tokens_details?.cached_tokens) || 0,
+      ...(usage.input_tokens_details?.cache_write_tokens !== undefined
+        ? { cache_write_tokens: Number(usage.input_tokens_details.cache_write_tokens) || 0 } : {}),
+      ...(object(usage.input_tokens_details?.cache_write_tokens_details)
+        ? { cache_write_tokens_details: { ...usage.input_tokens_details.cache_write_tokens_details } } : {}) },
     completion_tokens_details: { reasoning_tokens: Number(usage.output_tokens_details?.reasoning_tokens) || 0 }
   };
 }

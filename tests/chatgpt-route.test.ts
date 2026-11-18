@@ -205,10 +205,89 @@ test("chat, streaming: translated chunks, usage on request, and the request is r
   const body = openai()[0].body;
   assert.equal(body.instructions, "You are kind.");
   assert.deepEqual(body.input, [{ role: "user", content: "hi" }]);
-  assert.deepEqual(body.reasoning, { effort: "low" });
+  assert.deepEqual(body.reasoning, { effort: "low", summary: "auto" });
   for (const gone of ["messages", "temperature", "max_tokens", "top_p", "user", "seed", "stop", "stream_options"]) assert.ok(!(gone in body), gone);
   assert.equal(body.store, false);
   assert.equal(body.stream, true);
+});
+
+test("chat requests reasoning summaries when effort is enabled, including upstream output in both response modes", async () => {
+  await signIn();
+  answer = body => {
+    const summary = body.reasoning?.summary === "auto";
+    return sseResponse([
+      { type: "response.created", response: { id: "resp_summary" } },
+      ...(summary ? [{ type: "response.reasoning_summary_text.delta", output_index: 0, delta: "Checked the calculation." },
+        { type: "response.output_item.done", output_index: 1, item: { type: "reasoning", summary: [{ type: "summary_text", text: "Checked the calculation." }] } }] : []),
+      ...textEvents("2562")
+    ]);
+  };
+  const streamed = chunks(await (await chat({ stream: true, reasoning_effort: "medium" })).text());
+  assert.equal(streamed.map(part => part.choices[0]?.delta?.reasoning_content ?? "").join(""), "Checked the calculation.");
+  const finished = await (await chat({ stream: false, reasoning_effort: "medium" })).json() as any;
+  assert.equal(finished.choices[0].message.reasoning_content, "Checked the calculation.");
+  for (const effort of ["none", "minimal"]) {
+    await (await chat({ stream: false, reasoning_effort: effort })).text();
+    assert.deepEqual(openai().at(-1)?.body.reasoning, { effort });
+  }
+  await (await chat({ stream: false })).text();
+  assert.equal(openai().at(-1)?.body.reasoning, undefined);
+});
+
+test("GPT-6.2 translated system prompts lead the cacheable input; native Responses instructions remain request-scoped", () => {
+  for (const slug of ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.2-sol-2026-11-18"]) {
+    for (const protocol of ["chat", "messages"] as const) {
+      const payload = protocol === "chat"
+        ? { messages: [{ role: "system", content: "Stable policy." }, { role: "developer", content: "More rules." }, { role: "user", content: "hi" }] }
+        : { system: "Stable policy.\n\nMore rules.", messages: [{ role: "user", content: "hi" }] };
+      const before = structuredClone(payload);
+      const body = toChatGptRequest(payload, protocol, slug).body;
+      assert.equal(body.instructions, undefined);
+      assert.deepEqual(body.input[0], { role: "developer", content: "Stable policy.\n\nMore rules." });
+      assert.equal(body.input[1].role, "user");
+      assert.deepEqual(payload, before);
+    }
+  }
+  const native = toChatGptRequest({ input: "hi", instructions: "This turn only." }, "responses", "gpt-6.2-sol").body;
+  assert.equal(native.instructions, "This turn only.");
+  assert.deepEqual(native.input, [{ role: "user", content: "hi" }]);
+  const older = toChatGptRequest({ messages: [{ role: "system", content: "rules" }, { role: "user", content: "hi" }] }, "chat", "gpt-6.1-sol").body;
+  assert.equal(older.instructions, "rules");
+});
+
+test("Responses cache controls and diagnostic comparisons reach the plan with content breakpoints intact", async () => {
+  await signIn();
+  const input = [{ role: "developer", content: [{ type: "input_text", text: "Stable policy.", prompt_cache_breakpoint: { mode: "explicit" } }] },
+    { role: "user", content: "hi" }];
+  const options = { mode: "implicit", ttl: "30m", comparison_response_id: "resp_baseline" };
+  const diagnostics = { type: "cache_hit" };
+  answer = () => sseResponse([{ type: "response.completed", response: { id: "resp_cache", status: "completed", output: [], prompt_cache_diagnostics: diagnostics } }]);
+  for (const stream of [true, false]) {
+    const reply = await responses({ stream, input, prompt_cache_options: options });
+    assert.equal(reply.status, 200);
+    assert.deepEqual(openai().at(-1)?.body.prompt_cache_options, options);
+    assert.deepEqual(openai().at(-1)?.body.input, input);
+    if (stream) assert.match(await reply.text(), /"prompt_cache_diagnostics":\{"type":"cache_hit"\}/);
+    else assert.deepEqual((await reply.json() as any).prompt_cache_diagnostics, diagnostics);
+  }
+});
+
+test("cache writes survive Chat and Messages translation without double-counting input", async () => {
+  await signIn();
+  const usage = { input_tokens: 3000, output_tokens: 20, total_tokens: 3020,
+    input_tokens_details: { cached_tokens: 1024, cache_write_tokens: 1536, cache_write_tokens_details: { ttl_30m_tokens: 1536, ttl_12h_tokens: 0 } } };
+  answer = () => sseResponse(textEvents("ok", usage));
+  for (const stream of [true, false]) {
+    const reply = await chat({ stream, stream_options: { include_usage: true } });
+    const mapped = stream ? chunks(await reply.text()).at(-1).usage : (await reply.json() as any).usage;
+    assert.equal(mapped.prompt_tokens, 3000);
+    assert.deepEqual(mapped.prompt_tokens_details, usage.input_tokens_details);
+    const message = await post("/v1/messages", { model: "chatgpt/gpt-test", max_tokens: 100, stream, messages: [{ role: "user", content: "hi" }] });
+    const mappedMessage = stream
+      ? (await message.text()).split("\n").filter(line => line.startsWith("data: ")).map(line => JSON.parse(line.slice(6))).find(event => event.type === "message_delta").usage
+      : (await message.json() as any).usage;
+    assert.deepEqual(mappedMessage, { input_tokens: 440, output_tokens: 20, cache_creation_input_tokens: 1536, cache_read_input_tokens: 1024 });
+  }
 });
 
 test("chat without include_usage sends no usage chunk", async () => {
@@ -869,7 +948,7 @@ test("an unsupported field is learned per model, and never for the fields that c
   answer = () => sseResponse(textEvents("ok"));
   const other = await post("/v1/chat/completions", { model: "chatgpt/gpt-two", messages: [{ role: "user", content: "hi" }], reasoning_effort: "high", stream: false });
   assert.equal(other.status, 200);
-  assert.deepEqual(openai()[0].body.reasoning, { effort: "high" }, "what one model refused is still sent to another");
+  assert.deepEqual(openai()[0].body.reasoning, { effort: "high", summary: "auto" }, "what one model refused is still sent to another");
   answer = () => new Response(JSON.stringify({ error: { code: "subscription_sharing_unsupported_capability", param: "tools", message: "no" } }), { status: 400 });
   asked = [];
   const tools = [{ type: "function", function: { name: "f", parameters: {} } }];

@@ -10,7 +10,7 @@ const fields = (s: string) => new Set(s.split(/\s+/));
 const TOP: Record<Protocol, Set<string>> = {
   messages: fields("model messages max_tokens system tools tool_choice thinking output_config output_format metadata stream stop_sequences temperature top_p top_k service_tier cache_control container mcp_servers context_management inference_geo speed"),
   chat: fields("model messages audio frequency_penalty function_call functions logit_bias logprobs max_completion_tokens max_tokens metadata modalities n parallel_tool_calls prediction presence_penalty prompt_cache_key prompt_cache_retention reasoning_effort response_format safety_identifier seed service_tier stop store stream stream_options temperature tool_choice tools top_logprobs top_p user verbosity web_search_options"),
-  responses: fields("model input instructions background conversation include max_output_tokens max_tool_calls metadata parallel_tool_calls previous_response_id prompt prompt_cache_key prompt_cache_retention reasoning safety_identifier service_tier store stream stream_options temperature text tool_choice tools top_logprobs top_p truncation user context_management")
+  responses: fields("model input instructions background conversation include max_output_tokens max_tool_calls metadata parallel_tool_calls previous_response_id prompt prompt_cache_key prompt_cache_options prompt_cache_retention reasoning safety_identifier service_tier store stream stream_options temperature text tool_choice tools top_logprobs top_p truncation user context_management")
 };
 const BLOCKS: Record<string, Set<string>> = {
   text: fields("type text cache_control citations"),
