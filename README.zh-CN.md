@@ -294,7 +294,7 @@ CF 上游：messages 上的 Claude（`anthropic/…`）走 Cloudflare 的 AI RES
 
 修改前先读：`GET /v1/handoff?namespace=…` 返回 `{ data: { content, revision, source, updated_at }, writing_guide }`。PUT 的 JSON 为 `{ "content": "…", "expected_revision": 0, "namespace": "…" }`；DELETE 的 JSON 带版本号和可选空间。版本号使用刚读到的值（从未写过才是 0）；版本过期返回 409，页面保留草稿。绑定固定空间的钥匙仍只能操作自己的空间。
 
-新版 Resident 自动投递交接信时带固定投递 ID 和原始生成时间。重试、乱序旧信不能覆盖更新的信或之后的手动修改与删除。旧版 Resident 仍按原方式投递聊天原文，不更新当前信；旧版 Aelios 忽略新版投递附带的信息。升级时先按正常 `npm run deploy` 流程更新 Aelios（会应用 `0021_current_handoff.sql` 迁移），再更新 Resident。
+新版 Resident 自动投递交接信时带固定投递 ID 和原始生成时间。重试、乱序旧信不能覆盖更新的信或之后的手动修改与删除。Resident 信件超过 20000 字符时，仍完整保存原文并确认送达，当前交接信保持不变。如果交接信表不可用，`wake_up` 记录读取失败并返回其余开机包。旧版 Resident 仍按原方式投递聊天原文，不更新当前信；旧版 Aelios 忽略新版投递附带的信息。升级时先按正常 `npm run deploy` 流程更新 Aelios（会应用 `0021_current_handoff.sql` 迁移），再更新 Resident。
 
 `notebook` 是小本本：助手按页名自己读、自己改的笔记，比如备考进度。不会被自动召回，夜里不会被改写，也不会过期；在「记忆库 → 小本本」能看、能改、能删、能整本清空。
 
