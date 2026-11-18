@@ -350,6 +350,11 @@ export function toChatGptRequest(payload: Body, protocol: Protocol, slug: string
   const removed: string[] = [];
   const body = protocol === "chat" ? chatToResponses(payload, removed)
     : protocol === "messages" ? messagesToResponses(payload, removed) : cleanResponses(payload, removed);
+  // Chat clients such as Resident commonly omit effort to use the model's default.
+  // Opt in to 6.2 summaries without overriding that default; explicit none/minimal stays unchanged.
+  if (protocol === "chat" && /^gpt-6\.2(?:-|$)/.test(slug) && body.reasoning === undefined) {
+    body.reasoning = { summary: "auto" };
+  }
   // GPT-6.2 appends top-level instructions after input, outside cacheable prefixes.
   // Preserve reusable system guidance from translated protocols as a leading developer message.
   // Native Responses callers retain control over their own instructions and cache boundaries.

@@ -234,6 +234,28 @@ test("chat requests reasoning summaries when effort is enabled, including upstre
   assert.equal(openai().at(-1)?.body.reasoning, undefined);
 });
 
+test("GPT-6.2 Chat requests summaries with default effort, while explicit controls and native Responses remain unchanged", async () => {
+  await signIn();
+  answer = body => sseResponse([
+    ...(body.reasoning?.summary === "auto" ? [{ type: "response.reasoning_summary_text.delta", output_index: 1, delta: "Summary." },
+      { type: "response.output_item.done", output_index: 1, item: { type: "reasoning", summary: [{ type: "summary_text", text: "Summary." }] } }] : []),
+    ...textEvents("ok")
+  ]);
+  for (const model of ["chatgpt/gpt-6.2-sol", "chatgpt/gpt-6.2-astra"]) {
+    const streamed = chunks(await (await chat({ model, stream: true })).text());
+    assert.equal(streamed.map(part => part.choices[0]?.delta?.reasoning_content ?? "").join(""), "Summary.");
+    assert.deepEqual(openai().at(-1)?.body.reasoning, { summary: "auto" });
+    const result = await (await chat({ model, stream: false })).json() as any;
+    assert.equal(result.choices[0].message.reasoning_content, "Summary.");
+    for (const effort of ["none", "minimal"]) {
+      await (await chat({ model, stream: false, reasoning_effort: effort })).text();
+      assert.deepEqual(openai().at(-1)?.body.reasoning, { effort });
+    }
+  }
+  const native = toChatGptRequest({ input: "hi", reasoning: { effort: "low" } }, "responses", "gpt-6.2-sol").body;
+  assert.deepEqual(native.reasoning, { effort: "low" });
+});
+
 test("GPT-6.2 translated system prompts lead the cacheable input; native Responses instructions remain request-scoped", () => {
   for (const slug of ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.2-sol-2026-11-18"]) {
     for (const protocol of ["chat", "messages"] as const) {
@@ -287,6 +309,67 @@ test("cache writes survive Chat and Messages translation without double-counting
       ? (await message.text()).split("\n").filter(line => line.startsWith("data: ")).map(line => JSON.parse(line.slice(6))).find(event => event.type === "message_delta").usage
       : (await message.json() as any).usage;
     assert.deepEqual(mappedMessage, { input_tokens: 440, output_tokens: 20, cache_creation_input_tokens: 1536, cache_read_input_tokens: 1024 });
+  }
+});
+
+test("plan cache affinity is stable across protocols and isolated by identity and session", async () => {
+  await signIn();
+  const send = async (path: string, body: any, header = "x-aelios-session-id", session = "sdk-session-1") => {
+    const reply = await post(path, { model: "chatgpt/gpt-6.2-sol", stream: false, ...body }, { [header]: session });
+    assert.equal(reply.status, 200); await reply.text();
+    return need(openai().at(-1));
+  };
+  const first = await send("/v1/chat/completions", { messages: [{ role: "user", content: "hi" }] });
+  const key = first.headers["session-id"];
+  assert.match(key, /^[a-f0-9]{64}$/);
+  assert.equal(first.body.prompt_cache_key, key);
+  assert.notEqual(key, "sdk-session-1");
+  for (const [path, body] of [
+    ["/v1/chat/completions", { messages: [{ role: "user", content: "different suffix" }] }],
+    ["/v1/responses", { input: "hi" }],
+    ["/v1/messages", { max_tokens: 100, messages: [{ role: "user", content: "hi" }] }]
+  ] as const) {
+    const call = await send(path, body);
+    assert.equal(call.headers["session-id"], key);
+    assert.equal(call.body.prompt_cache_key, key);
+  }
+  const codex = await send("/v1/responses", { input: "hi" }, "session-id");
+  assert.equal(codex.headers["session-id"], key);
+  const second = await send("/v1/responses", { input: "hi" }, "x-aelios-session-id", "sdk-session-2");
+  assert.notEqual(second.headers["session-id"], key);
+  env.GATEWAY_CONFIG = JSON.stringify({ version: 3, identities: [identity(), { ...identity(), slug: "other", namespace: "other-space" }] });
+  invalidateSettingsCache();
+  const other = await send("/other/v1/responses", { input: "hi" });
+  assert.notEqual(other.headers["session-id"], key);
+});
+
+test("cache key hints are scoped without a session header, and unhinted clients retain their request shape", async () => {
+  await signIn();
+  await (await responses({ stream: false, prompt_cache_key: "client-cache-key" })).text();
+  const keyed = need(openai().at(-1));
+  assert.equal(keyed.headers["session-id"], keyed.body.prompt_cache_key);
+  assert.notEqual(keyed.body.prompt_cache_key, "client-cache-key");
+  await (await responses({ stream: false })).text();
+  assert.equal(openai().at(-1)?.headers["session-id"], undefined);
+  assert.equal(openai().at(-1)?.body.prompt_cache_key, undefined);
+});
+
+test("cache affinity survives OAuth retries without forwarding caller auth or Codex internal headers", async () => {
+  await signIn({ refreshedAgo: 120_000 });
+  answer = (_body, _headers, nth) => nth === 1
+    ? Response.json({ error: { message: "expired", code: "invalid_token" } }, { status: 401 })
+    : sseResponse(textEvents("ok"));
+  const reply = await post("/v1/responses", { model: "chatgpt/gpt-6.2-sol", input: "hi", stream: false }, {
+    "x-aelios-session-id": "same-session", "x-openai-internal-codex-responses-lite": "true", "x-codex-turn-state": "untrusted-state"
+  });
+  assert.equal(reply.status, 200); await reply.text();
+  assert.equal(openai().length, 2);
+  for (const call of openai()) {
+    assert.equal(call.headers["session-id"], openai()[0].headers["session-id"]);
+    assert.equal(call.body.prompt_cache_key, call.headers["session-id"]);
+    assert.equal(call.headers["x-openai-internal-codex-responses-lite"], undefined);
+    assert.equal(call.headers["x-codex-turn-state"], undefined);
+    assert.notEqual(call.headers.authorization, "Bearer owner-key");
   }
 });
 

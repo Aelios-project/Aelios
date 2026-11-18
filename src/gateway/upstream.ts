@@ -1,10 +1,11 @@
 import type { Env } from "../types";
-import { GATEWAY_HOST_RE, gatewayInAddress, isMainModel, PATHS, stripAddress, type GatewayConfig, type Identity, type Protocol } from "./config";
+import { GATEWAY_HOST_RE, gatewayInAddress, identityNamespace, isMainModel, PATHS, stripAddress, type GatewayConfig, type Identity, type Protocol } from "./config";
 import { applyThinkingPolicy, PROTECTED_TOOL_FIELDS, rejectedFieldNames, sanitizeCacheControl, STRIPPABLE_TOOL_FIELDS, stripToolField, type Body } from "./protocol";
 import { normalizeRequest, validateRequest } from "./request";
 import { MODEL_PREFIX, RESPONSES_URL } from "../chatgpt/client";
 import { callChatGptUpstream } from "../chatgpt/upstream";
 import { toChatGptRequest } from "../chatgpt/toResponses";
+import { sha256Hex } from "../utils/hash";
 
 const ACCOUNT_RE = /^[a-f0-9]{32}$/i;
 const REST_HOST_RE =
@@ -209,6 +210,8 @@ function setRouteAuth(headers: Headers, route: UpstreamRoute, token: string | un
 export interface PreparedRequest { route: UpstreamRoute; headers: Headers; body: Body; removed: string[];
   /** The model name as the caller wrote it; the route may have trimmed a prefix off `body.model`. */
   requestedModel: string;
+  /** Authenticated identity scope for ChatGPT cache affinity; no caller credentials are included. */
+  chatgptScope?: string;
   /** Set when auto guessed adaptive thinking; holds the client's own anthropic-beta for the fallback. */
   guessedThinking?: { beta: string | null };
 }
@@ -245,6 +248,7 @@ export function prepareGatewayRequest(env: Env, config: GatewayConfig, identity:
   // A request ChatGPT plan usage cannot take is the caller's 400, found before recall or recording spends anything.
   if (chatgpt) toChatGptRequest(out, protocol, route.model);
   return { route, headers, body: out, removed: normalized.removed, requestedModel: body.model,
+    ...(chatgpt ? { chatgptScope: JSON.stringify([identityNamespace(identity), identity.slug]) } : {}),
     ...(guessed ? { guessedThinking: { beta: clientBeta } } : {}) };
 }
 // Isolate-scope learned capability: Vertex-backed and relay lines answer 400
@@ -281,8 +285,13 @@ export async function callGatewayUpstream(env: Env, protocol: Protocol, original
   // Check the actual wire payload, including the gateway's own modifications.
   validateRequest(body, protocol, headers);
   if (route.auth === "chatgpt") {
+    // Codex uses a stable session-id header together with the body cache key.
+    // Scope caller hints to the authenticated identity; never forward arbitrary headers.
+    const hint = original.headers.get("x-aelios-session-id") || original.headers.get("session-id") || body.prompt_cache_key;
+    const sessionId = prepared.chatgptScope && typeof hint === "string" && hint.trim()
+      ? await sha256Hex(JSON.stringify([prepared.chatgptScope, hint])) : undefined;
     return callChatGptUpstream(env, protocol, original.signal,
-      { model: route.model, requestedModel: prepared.requestedModel, removed: prepared.removed }, body,
+      { model: route.model, requestedModel: prepared.requestedModel, removed: prepared.removed, sessionId }, body,
       ctx ? promise => ctx.waitUntil(promise) : undefined);
   }
   const learned = rejectedToolFields.get(route.url);

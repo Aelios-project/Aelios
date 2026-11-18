@@ -17,6 +17,8 @@ export interface ChatGptTarget {
   requestedModel: string;
   /** The gateway's normalization report; this call adds what it dropped. */
   removed: string[];
+  /** Gateway-scoped opaque cache affinity, shared by the body key and session-id header. */
+  sessionId?: string;
 }
 
 /**
@@ -55,6 +57,7 @@ export async function callChatGptUpstream(env: Env, protocol: Protocol, signal: 
   const wantsStream = payload.stream === true;
   const includeUsage = payload.stream_options?.include_usage === true;
   const converted = toChatGptRequest(payload, protocol, target.model);
+  if (target.sessionId) converted.body.prompt_cache_key = target.sessionId;
   target.removed.push(...converted.removed);
   for (const field of learnedFor(target.model)) {
     if (converted.body[field] !== undefined) { delete converted.body[field]; target.removed.push(field); }
@@ -63,7 +66,7 @@ export async function callChatGptUpstream(env: Env, protocol: Protocol, signal: 
   let upstream: Response | undefined;
   try {
     for (let round = 0; round <= MAX_LEARNING_ROUNDS; round++) {
-      const response = await postResponses(env, converted.body, signal, waitUntil);
+      const response = await postResponses(env, converted.body, signal, waitUntil, target.sessionId);
       if (response.ok) { upstream = response; break; }
       const failure = await readFailure(response);
       const param = failure.param;
