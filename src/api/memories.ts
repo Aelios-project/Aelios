@@ -1,4 +1,5 @@
 import { authenticate } from "../auth/apiKey";
+import { HandoffError, residentHandoffMetadata, saveResidentHandoff, validateHandoff } from "../db/v2/handoff";
 import { requireScope } from "../auth/scopes";
 import { getOrCreateConversation } from "../db/conversations";
 import { createMemory, getMemoryById, listMemoriesPage, softDeleteMemory, updateMemory } from "../db/memories";
@@ -384,17 +385,39 @@ async function handleIngestMemories(
   if (messages.length === 0) return openAiError("messages must contain at least one message", 400);
 
   const namespace = resolveNamespace(profile, body.namespace);
+  const source = readString(body.source) || profile.source;
+  let handoff: ReturnType<typeof residentHandoffMetadata> | undefined;
+  let handoffContent = "";
+  if (body.handoff !== undefined) {
+    try {
+      if (source !== "aelios-resident:letter" || messages.length !== 1 || messages[0].role !== "assistant" || typeof messages[0].content !== "string") {
+        throw new HandoffError("handoff metadata is only valid for one Resident assistant letter");
+      }
+      handoff = residentHandoffMetadata(body.handoff);
+      handoffContent = validateHandoff(messages[0].content.replace(/^（交接信）/, ""));
+    } catch (error) {
+      if (error instanceof HandoffError) return openAiError(error.message, error.status);
+      throw error;
+    }
+  }
   const conversation = await getOrCreateConversation(env.DB, {
     namespace,
     id: readString(body.conversation_id)
   });
-  const source = readString(body.source) || profile.source;
   const ids = await saveIngestMessages(env.DB, {
     conversationId: conversation.id,
     namespace,
     source,
     messages
   });
+
+  if (handoff) {
+    try {
+      await saveResidentHandoff(env.DB, { namespace, content: handoffContent, ...handoff });
+    } catch {
+      return openAiError("Current handoff could not be saved; delivery is not confirmed", 503);
+    }
+  }
 
   return json({
     data: {

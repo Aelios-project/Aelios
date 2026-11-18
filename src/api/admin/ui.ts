@@ -1058,6 +1058,20 @@ tailwind.config = { corePlugins: { preflight: false } };
           </div>
         </div>
 
+        <div x-show="moreView === 'handoff'" class="flex flex-col gap-3">
+          <p class="text-[13px] muted">${t("每个空间只保留当前一封交接信。你和 AI 都能编辑；仅调用 MCP wake_up 时带回，不自动加入模型上下文。", "One current handoff per space, editable by you and your AI. Returned only when MCP wake_up is called; never automatically added to model context.")}</p>
+          <div class="panel panel-pad grid gap-3">
+            <p class="text-xs muted" x-text="handoffNote.updated_at ? handoffNote.source + ' · ' + fmt(handoffNote.updated_at) : L('还没有交接信', 'No handoff yet')"></p>
+            <textarea x-model="handoffDraft" :disabled="!handoffLoaded || handoffBusy" class="field min-h-64" :aria-label="L('当前交接信', 'Current handoff')"></textarea>
+            <details><summary class="text-sm cursor-pointer" x-text="L('怎么写交接信', 'Writing guide')"></summary><p class="text-sm muted whitespace-pre-wrap" x-text="handoffGuide"></p></details>
+            <div class="flex gap-2">
+              <button type="button" @click="saveHandoff(false)" :disabled="!handoffLoaded || handoffBusy || !handoffDraft.trim()" class="btn btn-primary" x-text="L('保存', 'Save')"></button>
+              <button type="button" @click="loadHandoff(true)" :disabled="handoffBusy" class="btn" x-text="L('重新读取', 'Reload')"></button>
+              <button type="button" @click="saveHandoff(true)" :disabled="!handoffLoaded || handoffBusy || !handoffNote.content" class="btn btn-danger" x-text="L('删除', 'Delete')"></button>
+            </div>
+          </div>
+        </div>
+
         <div x-show="moreView === 'notebook'" class="flex flex-col gap-3">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <p class="min-w-0 flex-1 text-[13px] muted">${t("助手按页名读写的笔记，比如备考进度。不会被自动想起，夜里不改写，也不过期。每个空间最多 50 页，每页 2 万字。", "Notes your assistant reads and writes by page name, like study progress. Never recalled on their own, never rewritten at night, never expire. Up to 50 pages per space, 20,000 characters each.")}</p>
@@ -1971,6 +1985,7 @@ function memoryAdmin() {
       { id: 'precious', label: '珍贵', labelEn: 'Keepsakes' },
       { id: 'glossary', label: '黑话', labelEn: 'Our words' },
       { id: 'notebook', label: '小本本', labelEn: 'Notebook' },
+      { id: 'handoff', label: '交接信', labelEn: 'Handoff' },
       { id: 'world', label: '世界知识', labelEn: 'World facts' }
     ],
     canonicalMemoryTypes: ['fact', 'event', 'preference', 'relationship', 'boundary', 'habit', 'decision', 'note'],
@@ -2041,6 +2056,11 @@ function memoryAdmin() {
     memoryQuery: '',
     precious: [],
     glossary: [],
+    handoffNote: { content: null, revision: 0, source: '', updated_at: null },
+    handoffDraft: '',
+    handoffGuide: '',
+    handoffLoaded: false,
+    handoffBusy: false,
     notebookPages: [],
     notebookDraft: null,
     notebookLoaded: false,
@@ -2635,6 +2655,8 @@ function memoryAdmin() {
       this.reviewSelected = {};
       this.precious = []; this.glossary = [];
       this.notebookPages = []; this.notebookDraft = null; this.notebookLoaded = false;
+      this.handoffNote = { content: null, revision: 0, source: '', updated_at: null };
+      this.handoffDraft = ''; this.handoffGuide = ''; this.handoffLoaded = false; this.handoffBusy = false;
       this.diaryDailies = []; this.diaryWeeklies = []; this.diaryMonthlies = []; this.diaryExpanded = {}; this.diaryRewriting = ''; this.diaryPick = ''; this.diaryReading = false;
       this.worldItems = []; this.worldSelection = {}; this.worldQuery = '';
       this.importReview = { batches: [], importId: '', filter: 'all', items: [], counts: { pending: 0, clef_yes: 0, clef_no: 0 }, offset: 0, more: false, loading: false, bulk: null };
@@ -2889,6 +2911,7 @@ function memoryAdmin() {
       if (this.page === 'diary') tasks.push(this.loadDiary());
       if (this.page === 'memory' && this.moreView === 'world') tasks.push(this.loadWorldFacts());
       if (this.page === 'memory' && this.moreView === 'notebook') tasks.push(this.loadNotebook());
+      if (this.page === 'memory' && this.moreView === 'handoff') tasks.push(this.loadHandoff());
       if (this.page === 'transfer') tasks.push(this.loadTransferInfo(), this.loadImportBatches());
       if (this.page === 'review' && this.reviewTab === 'import') tasks.push(this.loadImportBatches(), this.loadImportCandidates(true));
       if (this.page === 'dream') {
@@ -3185,6 +3208,8 @@ function memoryAdmin() {
     loadMoreView() {
       if (this.moreView === 'world') {
         this.loadWorldFacts();
+      } else if (this.moreView === 'handoff') {
+        this.loadHandoff();
       } else if (this.moreView === 'notebook') {
         this.loadNotebook();
       } else if (this.moreView === 'important') {
@@ -3520,6 +3545,46 @@ function memoryAdmin() {
         this.notify(this.L('黑话已删除', 'Word deleted'));
       } catch (error) {
         this.notify(error.message);
+      }
+    },
+    async loadHandoff(force) {
+      if (this.handoffLoaded && !force) return;
+      if (force && this.handoffDraft !== (this.handoffNote.content || '') &&
+          !window.confirm(this.L('重新读取会放弃尚未保存的修改，继续？', 'Discard unsaved edits and reload?'))) return;
+      const revision = this.spaceRevision;
+      this.handoffBusy = true;
+      try {
+        const response = await this.request(this.withNamespace('/v1/handoff'));
+        if (revision !== this.spaceRevision) return;
+        this.handoffNote = response.data;
+        this.handoffDraft = response.data.content || '';
+        this.handoffGuide = response.writing_guide || '';
+        this.handoffLoaded = true;
+      } catch (error) {
+        if (revision === this.spaceRevision) this.notify(error.message);
+      } finally {
+        if (revision === this.spaceRevision) this.handoffBusy = false;
+      }
+    },
+    async saveHandoff(remove) {
+      if (!this.handoffLoaded || this.handoffBusy) return;
+      if (remove && !window.confirm(this.L('删除当前交接信？', 'Delete the current handoff?'))) return;
+      const revision = this.spaceRevision;
+      const draft = this.handoffDraft;
+      this.handoffBusy = true;
+      try {
+        const response = await this.request(this.withNamespace('/v1/handoff'), {
+          method: remove ? 'DELETE' : 'PUT',
+          body: JSON.stringify({ content: draft, expected_revision: this.handoffNote.revision })
+        });
+        if (revision !== this.spaceRevision) return;
+        this.handoffNote = response.data;
+        if (this.handoffDraft === draft) this.handoffDraft = response.data.content || '';
+        this.notify(this.L('交接信已更新', 'Handoff updated'));
+      } catch (error) {
+        if (revision === this.spaceRevision) this.notify(error.message);
+      } finally {
+        if (revision === this.spaceRevision) this.handoffBusy = false;
       }
     },
     async loadNotebook() {

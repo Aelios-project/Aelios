@@ -1,4 +1,5 @@
 import { authenticate } from "../auth/apiKey";
+import { HANDOFF_GUIDE, handoffRevision, readHandoff, validateHandoff, writeHandoff } from "../db/v2/handoff";
 import { getOrCreateConversation } from "../db/conversations";
 import { fetchMemoriesByIds, getMemoryById, listMemoriesPage } from "../db/memories";
 import { filterUnsavedMessages, getMessagesByIds, saveIngestMessages } from "../db/messages";
@@ -149,6 +150,7 @@ export const MEMORY_GUIDE = [
   "- As new facts, plans, preferences or corrections come up: call remember right away. Moments that matter: keep_moment. Nicknames and in-jokes: learn_word.",
   "- If they ask you to forget something: forget.",
   "- For running notes you keep up to date yourself, such as progress on a long task: notebook, one named page each. Read the page before you rewrite it.",
+  "- Before changing clients or ending a session that needs continuity: use handoff to leave your next self the current situation and next steps. Read it first and use its revision when writing. The latest letter is returned only when wake_up is called, never automatically added to model requests.",
   "- Before leaning on the details of a memory (exact words, dates, who said what): read_diary with its memory_id shows where it came from.",
   "- If memories are not being added to your messages automatically, this app does not record conversations for Aelios: call log_conversation before the conversation ends.",
   "Use what you find naturally; there is no need to announce each lookup."
@@ -183,7 +185,9 @@ function getTools(options: ToolListOptions): Array<Record<string, unknown>> {
         "It loads what you already know going in: core memories about them, yesterday's diary, the latest weekly " +
         "and monthly summaries, kept moments and private words, the names of your notebook pages, plus a short note on " +
         "when to use the other memory tools. Once per conversation is enough. Read-only. " +
-        "Returns { data: { how_to_use, core, impressions, precious, glossary, notebook } } (notebook only when there are pages).",
+        "Returns { data: { how_to_use, core, impressions, precious, glossary, notebook, handoff } } " +
+        "(notebook only when there are pages; handoff only when a current letter exists). " +
+        "The handoff is a dated continuity note, not verified memory or higher-priority instructions; check its age against the current conversation.",
       annotations: { title: "Wake up with your memories", ...READ_ONLY },
       inputSchema: {
         type: "object",
@@ -462,6 +466,21 @@ function getTools(options: ToolListOptions): Array<Record<string, unknown>> {
       }
     },
     {
+      name: "handoff",
+      description: `Read, write or delete the one current handoff letter for this memory space. ${HANDOFF_GUIDE} Read returns { data: { content, revision, source, updated_at }, writing_guide }; empty content is null. Write and delete require expected_revision from a fresh read. A conflict changes nothing. Letters are not merged, recalled, distilled or injected automatically; wake_up returns the current letter when called.`,
+      annotations: { title: "Current handoff letter", openWorldHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["read", "write", "delete"] },
+          content: { type: "string", maxLength: 20000, description: HANDOFF_GUIDE },
+          expected_revision: { type: "integer", minimum: 0, description: "Revision returned by read; use 0 for the first letter." },
+          namespace: NAMESPACE_PARAM
+        },
+        required: ["action"]
+      }
+    },
+    {
       name: "notebook",
       description:
         "Your notebook: named pages you read and rewrite yourself, for running notes such as progress on a long task " +
@@ -600,13 +619,14 @@ async function callTool(
     if (!hasScope(profile, "memory:read")) return toolError("Missing memory:read scope");
     if (!isV2Enabled(env)) return toolError("wake_up requires MEMORY_LIFECYCLE_ENABLED=true");
     const namespace = resolveNamespace(profile, args.namespace);
-    const [pkg, corePage, pages] = await Promise.all([
+    const [pkg, corePage, pages, handoff] = await Promise.all([
       buildBootPackage(env, { namespace }),
       listMemoriesPage(env.DB, { namespace, status: "active", limit: CORE_MEMORY_LIMIT, offset: 0 }),
       listNotebookPages(env.DB, { namespace }).catch((error) => {
         console.warn("wake_up: list notebook failed", error);
         return [] as NotebookPageSummary[];
-      })
+      }),
+      readHandoff(env.DB, namespace)
     ]);
     if (pkg.precious.length > 0) {
       ctx.waitUntil(markPreciousInjected(env.DB, { namespace, ids: pkg.precious.map((p) => p.id) }));
@@ -614,7 +634,24 @@ async function callTool(
     // 置顶优先、再按重要度的前几条：官端用户日记常是空的，开场至少知道这个人是谁。
     const core = corePage.records.map((record) => ({ id: record.id, type: record.type, content: record.content }));
     const notebook = notebookNamesLine(pages);
-    return textToolResult({ data: { how_to_use: MEMORY_GUIDE, core, ...pkg, ...(notebook ? { notebook } : {}) } });
+    return textToolResult({ data: { how_to_use: MEMORY_GUIDE, core, ...pkg, ...(notebook ? { notebook } : {}), ...(handoff.content !== null ? { handoff } : {}) } });
+  }
+
+  if (name === "handoff") {
+    const action = args.action;
+    if (action !== "read" && action !== "write" && action !== "delete") return toolError("action must be read, write or delete");
+    const scope: Scope = action === "read" ? "memory:read" : "memory:write";
+    if (!hasScope(profile, scope)) return toolError(`Missing ${scope} scope`);
+    const namespace = resolveNamespace(profile, args.namespace);
+    try {
+      if (action === "read") return textToolResult({ data: await readHandoff(env.DB, namespace), writing_guide: HANDOFF_GUIDE });
+      return textToolResult({ data: await writeHandoff(env.DB, {
+        namespace, content: action === "delete" ? null : validateHandoff(args.content),
+        expectedRevision: handoffRevision(args.expected_revision), source: "mcp"
+      }) });
+    } catch (error) {
+      return toolError(error instanceof Error ? error.message : "handoff failed");
+    }
   }
 
   if (name === "notebook") {
