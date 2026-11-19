@@ -410,7 +410,7 @@ curl -s "<Worker 地址>/v1/import/info?namespace=default" -H "Authorization: Be
 
 ### 聊天记录
 
-聊天记录会一天天交给夜里整理记忆的那个模型（`DREAM_MODEL`）读，抽出候选记忆。要花 Workers AI 的用量，量大时先导两三天的看看效果，再全导。
+导入聊天时可以提取候选记忆，也可以仅归档原文。提取候选会调用 `DREAM_MODEL`；仅归档只做文字索引，供 MCP `search_chat` 查原话和前后文。
 
 **最省事：让用户在网页上导。** `<Worker 地址>/admin` → **导入导出** → **导入聊天记录**，选文件就行，页面会拆、会切段、显示进度，关了下次选同一个文件接着做。它认：
 
@@ -431,7 +431,7 @@ curl -s "<Worker 地址>/v1/import/info?namespace=default" -H "Authorization: Be
      "total_chunks": 42, "total_messages": 2300, "first_date": "2025-06-01", "last_date": "2025-12-31" }
    ```
 
-   返回里的 `data.batch.id` 是这批的 ID，`data.done_keys` 是已经做完的段，跳过它们。
+   仅归档时在这个请求的 JSON 里加 `"mode": "archive"`。返回里的 `data.batch.id` 是这批的 ID，`data.done_keys` 是已经做完的段，跳过它们。
 2. 按天切段，一段一段发。一段默认最多 60 条、3 万字，硬上限 80 条、4 万字；一天太多就切成几段：
 
    ```json
@@ -441,8 +441,8 @@ curl -s "<Worker 地址>/v1/import/info?namespace=default" -H "Authorization: Be
        "messages": [ { "seq": 0, "role": "user", "content": "……", "time": "2025-12-15T23:01:00+08:00", "speaker": "<说话人>" } ] } }
    ```
 
-   `key` 每段不同、不超过 64 个字符；`seq` 在一段里不重复。一段一段串着发，别并发。
-3. 做完告诉用户去 `/admin` → **待审** → **导入的** 里挑。
+   `key` 每段不同、不超过 64 个字符。`seq` 按文件顺序递增；归档多段会话时，每条加上稳定的 `conversation` 字符串，`around` 才能在同一段会话里找前后文。归档允许单条独占一段，最多 15 万字符。按段发送。
+3. 提取记忆后在 `/admin` → **待审** → **导入的** 里挑。归档后用 MCP 的 `search_chat` 即可搜索。
 
 ## 附：其它
 

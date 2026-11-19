@@ -1,3 +1,5 @@
+import { ARCHIVE_MAX_MESSAGE_CHARS, archiveWriteStatements } from "./chatArchive";
+import { chatContentText } from "../memory/transfer/chatParse";
 import { insertMessageFts } from "../memory/fts";
 import type { MessageRecord, OpenAIChatMessage, TokenUsage } from "../types";
 import { sha256Hex } from "../utils/hash";
@@ -286,11 +288,12 @@ export async function listMessagesByNamespaceInRange(
  * 全文索引一起删，夜里整理、写日记和召回原话都不会再读到它。
  */
 export async function deleteMessage(db: D1Database, input: { namespace: string; id: string }): Promise<boolean> {
-  const [deleted] = await db.batch([
+  const [deleted, , archived] = await db.batch([
     db.prepare("DELETE FROM messages WHERE namespace = ? AND id = ?").bind(input.namespace, input.id),
-    db.prepare("DELETE FROM message_fts WHERE namespace = ? AND message_id = ?").bind(input.namespace, input.id)
+    db.prepare("DELETE FROM message_fts WHERE namespace = ? AND message_id = ?").bind(input.namespace, input.id),
+    db.prepare("DELETE FROM chat_archive WHERE namespace = ? AND id = ?").bind(input.namespace, input.id)
   ]);
-  return (deleted?.meta?.changes ?? 0) > 0;
+  return Boolean(deleted?.meta?.changes || archived?.meta?.changes);
 }
 
 export async function filterUnsavedMessages(
@@ -319,6 +322,7 @@ export async function saveIngestMessages(
     namespace: string;
     source: string;
     messages: OpenAIChatMessage[];
+    archive?: boolean;
   }
 ): Promise<string[]> {
   const ids: string[] = [];
@@ -331,7 +335,8 @@ export async function saveIngestMessages(
     const id = newId("msg");
     ids.push(id);
 
-    await db
+    const createdAt = nowIso();
+    const write = db
       .prepare(
         `INSERT INTO messages (
           id, conversation_id, namespace, role, content, source, stream, created_at, seq
@@ -345,10 +350,17 @@ export async function saveIngestMessages(
         content,
         input.source,
         0,
-        nowIso(),
+        createdAt,
         seq
-      )
-      .run();
+      );
+    const visible = input.archive ? cleanMessageText(chatContentText(message.content)) : "";
+    if (visible && visible.length <= ARCHIVE_MAX_MESSAGE_CHARS && (message.role === "user" || message.role === "assistant")) {
+      const archive = await archiveWriteStatements(db, input.namespace, [{ id, conversation_id: input.conversationId,
+        role: message.role, content: visible, source: input.source, created_at: createdAt, position: Date.parse(createdAt) }]);
+      await db.batch([write, ...archive]);
+    } else {
+      await write.run();
+    }
     await insertMessageFts(db, { namespace: input.namespace, messageId: id, content });
     seq += 1;
   }

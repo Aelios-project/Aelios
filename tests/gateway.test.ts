@@ -117,6 +117,24 @@ test("migrations, native chat recall, namespace isolation, original text and Que
   assert.equal(queue[1].kind, "tool"); assert.equal(queue[1].userText, "");
 });
 
+test("gateway archives visible chat once and never injects archive-only text", async () => {
+  env.CHAT_ARCHIVE_ENABLED = "true";
+  const { archiveWriteStatements, searchChatArchive } = await import("../src/db/chatArchive");
+  await db.batch(await archiveWriteStatements(db, "partner-a", [{ id: "archive-only", role: "assistant",
+    content: "柚子约定是档案专用的原话。", conversation_id: "old", source: "import:test", created_at: "2021-01-01", position: 0 }]));
+  const result = await run("/v1/chat/completions", { model: "partner", messages: [{ role: "user", content: "上次说的柚子约定是什么？" }] });
+  assert.equal(result.response.status, 200);
+  assert.doesNotMatch(JSON.stringify(calls[0].query), /档案专用的原话/);
+  await persistExchange(env, queue[0]);
+  await persistExchange(env, queue[0]);
+  assert.equal(count("chat_archive"), 3);
+  assert.equal(count("chat_archive_fts"), 3);
+  const search = await searchChatArchive(db, "partner-a", { query: "你好" });
+  assert.deepEqual(search.hits?.map(hit => hit.text), ["你好，记住了。"]);
+  await persistExchange(env, { ...queue[0], id: "aux", userId: "aux-user", kind: "auxiliary" });
+  assert.equal(count("chat_archive"), 3);
+});
+
 test("GPT Chat recall preserves each original message across OpenAI, Cloudflare and OpenRouter", async () => {
   const account = "d".repeat(32);
   const cases = [

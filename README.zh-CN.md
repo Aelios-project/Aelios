@@ -149,6 +149,8 @@ GitHub 不会自己更新 Fork。有新版本时：
 - **导入整理好的条目**：一行一条，`- 2025-12-15 [偏好] 内容 #标签`，日期、类型、标签都可以省；普通的 md 列表、一段段文字也认。页面上有一段提示词，贴给原来用的 AI，它就按这个格式把记得的事列出来。可以直接写进库（一字不差的跳过，跟库里很像的转去审核），也可以全部先进审核。
 - **导入聊天记录**：认 ChatGPT、Claude 导出的 `conversations.json`、酒馆的 `.jsonl`、「名字：内容」一行一句的文本。文件在页面里拆开、按天切段，一段段交给夜里整理记忆用的那个模型（`DREAM_MODEL`）读，抽出来的只进待审页「导入的」，点了才算数；页面上看得到进度和花了多少 token。原话只存被候选引用的那几句，不进聊天记录表，不受 7 天清理影响，也不会被夜里再整理一遍。页面关了下次选同一个文件接着做。
 
+**聊天档案**也从这个导入页进。选「仅归档原文，供关键词搜索」，按会话保存聊天正文，导入时零模型调用。接了 MCP 的客户端可以用 `search_chat` 搜 2–120 字符的原词或短语，再把命中的 ID 交给 `around` 查前后文。想自动保存新聊天，在「设置 → 数据留存」打开「自动归档新聊天」。档案从入档起算，默认长期留存。搜索走现有 D1 的文字索引，自动召回、`wake_up` 和 Dream 继续读各自原有的数据。
+
 ## 它实际在做什么
 
 ```
@@ -290,7 +292,7 @@ CF 上游：messages 上的 Claude（`anthropic/…`）走 Cloudflare 的 AI RES
 
 ### MCP 工具
 
-`wake_up` `recall` `remember` `keep_moment` `forget` `learn_word` `read_diary` `log_conversation` `list_memories` `handoff` `notebook`
+`wake_up` `recall` `remember` `keep_moment` `forget` `learn_word` `read_diary` `search_chat` `log_conversation` `list_memories` `handoff` `notebook`
 
 `handoff` 读、写、删当前空间唯一一封交接信（最多 20000 字符），工具自带写作提示词；人类也能在「记忆库 → 交接信」里编辑。只有明确调用 MCP `wake_up` 时，返回包才附上当前信；普通模型请求和 REST `/v1/memory_boot` 不会自动注入。当前信独立存储，不参与召回和夜间记忆提取。
 

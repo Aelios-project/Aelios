@@ -153,6 +153,8 @@ On the **Import & export** page, each one works on the space you have selected:
 - **Import tidied entries**: one per line, `- 2025-12-15 [preference] text #tag`; date, type and tags are optional, and a plain md list or paragraphs work too. The page has a ready prompt to paste into the AI you used before so it lists what it remembers in this format. Entries can go straight in (exact duplicates are skipped, near-duplicates go to review) or all go to review first.
 - **Import a chat history**: ChatGPT and Claude `conversations.json`, SillyTavern `.jsonl`, and plain "Name: text" transcripts. The file is read in the page and cut by day; each day goes through the same model the nightly consolidation uses (`DREAM_MODEL`), and what it finds only lands in the review page's "Imported" tab, where nothing counts until you approve it. Progress and token use are shown as it runs. Only the lines a candidate quotes are kept, outside the chat table, so the 7-day cleanup never removes them and the nightly run never re-reads them. Close the page and pick the same file later to carry on.
 
+**Chat archive** is another mode on that same chat import page. Pick **Archive text for keyword search** to store the text and conversation boundaries without calling a model. An MCP client can call `search_chat` with a literal keyword or phrase of 2–120 characters, then pass a hit ID as `around` to read the nearby messages. For new chats, turn on **Settings → Data retention → Archive new chats**. The archive has its own retention period, counted from storage, and defaults to keeping entries indefinitely. Archive search uses a text index in the existing D1. Automatic recall, `wake_up` and Dream read their existing sources only.
+
 ## How it actually works
 
 - Every time you speak, relevant old memories are tucked onto the end of the current conversation.
@@ -281,7 +283,7 @@ Everything except `/health` and `/admin` requires `Authorization: Bearer <key>`.
 
 ### MCP tools
 
-`wake_up` `recall` `remember` `keep_moment` `forget` `learn_word` `read_diary` `log_conversation` `list_memories` `handoff` `notebook`
+`wake_up` `recall` `remember` `keep_moment` `forget` `learn_word` `read_diary` `search_chat` `log_conversation` `list_memories` `handoff` `notebook`
 
 `handoff` reads, writes or deletes one current letter per memory space (up to 20000 characters), with writing guidance built into the tool. Humans can also edit it under Memories → Handoff. Only an explicit MCP `wake_up` call includes the current letter; ordinary model requests and REST `/v1/memory_boot` do not inject it. The letter is stored separately from recall and nightly memory extraction.
 

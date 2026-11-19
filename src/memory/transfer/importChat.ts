@@ -6,6 +6,7 @@
 // 夜里的整理也按日期取 messages，旧聊天混进去会被当成那天的聊天再整理一遍。
 // 所以只把候选引用到的那几句存进 imported_messages，id 用 imsg_ 开头，查出处时 getMessagesByIds 会去那里找。
 
+import { ARCHIVE_MAX_MESSAGE_CHARS, archiveWriteStatements, type ArchiveMessage } from "../../db/chatArchive";
 import {
   createImportCandidate,
   getImportChunk,
@@ -17,6 +18,7 @@ import {
 } from "../../db/v2";
 import type { Env, MessageRecord } from "../../types";
 import { sha256Hex } from "../../utils/hash";
+import { nowIso } from "../../utils/time";
 import { askClefAddScores, buildClefInput, isClefReviewOn } from "../clefJudge";
 import { findSimilarActiveMemory } from "../dedupGate";
 import { type DreamExtractModelResult, extractDreamMemoriesFromMessages } from "../dreamExtract";
@@ -36,6 +38,7 @@ export interface ChatChunkMessageInput {
   content: string;
   time: string | null;
   speaker: string | null;
+  conversation?: string;
 }
 
 export interface ChatChunkInput {
@@ -62,7 +65,7 @@ export interface ChatChunkResult {
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** 校验页面送来的一段；不对就返回原因。 */
-export function validateChatChunk(value: unknown): { chunk: ChatChunkInput } | { error: string } {
+export function validateChatChunk(value: unknown, archive = false): { chunk: ChatChunkInput } | { error: string } {
   if (!value || typeof value !== "object") return { error: "chunk must be an object" };
   const raw = value as Record<string, unknown>;
   const key = typeof raw.key === "string" ? raw.key.trim() : "";
@@ -76,7 +79,7 @@ export function validateChatChunk(value: unknown): { chunk: ChatChunkInput } | {
   for (const item of raw.messages) {
     if (!item || typeof item !== "object") return { error: "each message must be an object" };
     const message = item as Record<string, unknown>;
-    const seq = typeof message.seq === "number" && Number.isInteger(message.seq) && message.seq >= 0 ? message.seq : null;
+    const seq = typeof message.seq === "number" && Number.isSafeInteger(message.seq) && message.seq >= 0 ? message.seq : null;
     if (seq === null) return { error: "message.seq must be a non-negative integer" };
     if (seen.has(seq)) return { error: "message.seq must be unique within a chunk" };
     seen.add(seq);
@@ -89,11 +92,17 @@ export function validateChatChunk(value: unknown): { chunk: ChatChunkInput } | {
       if (!Number.isNaN(parsed.getTime())) time = parsed.toISOString();
     }
     const speaker = typeof message.speaker === "string" ? message.speaker.slice(0, 64) : null;
+    const conversation = message.conversation;
+    if (archive && conversation !== undefined && (typeof conversation !== "string" || !conversation.trim() || conversation.length > 128)) {
+      return { error: "message.conversation must be a non-empty string of at most 128 characters" };
+    }
     chars += content.length;
-    messages.push({ seq, role: message.role, content, time, speaker });
+    messages.push({ seq, role: message.role, content, time, speaker,
+      ...(archive && typeof conversation === "string" ? { conversation } : {}) });
   }
   if (messages.length === 0) return { error: "chunk has no text messages" };
-  if (chars > CHAT_CHUNK_MAX_CHARS) return { error: `a chunk holds at most ${CHAT_CHUNK_MAX_CHARS} characters` };
+  const maxChars = archive && messages.length === 1 ? ARCHIVE_MAX_MESSAGE_CHARS : CHAT_CHUNK_MAX_CHARS;
+  if (chars > maxChars) return { error: `a chunk holds at most ${maxChars} characters` };
   return { chunk: { key, day, messages } };
 }
 
@@ -101,6 +110,34 @@ export function validateChatChunk(value: unknown): { chunk: ChatChunkInput } | {
 export async function importedMessageId(importId: string, chunkKey: string, seq: number): Promise<string> {
   const hash = await sha256Hex(`${importId}:${chunkKey}:${seq}`);
   return `imsg_${hash.slice(0, 32)}`;
+}
+
+export async function archiveChatChunk(db: D1Database, batch: ImportBatchRow, chunk: ChatChunkInput) {
+  const base = { key: chunk.key, messages: chunk.messages.length };
+  const existing = await getImportChunk(db, { importId: batch.id, key: chunk.key });
+  if (existing?.status === "done") return { ...base, status: "skipped" };
+
+  const records = await Promise.all(chunk.messages.map(async (message): Promise<ArchiveMessage> => ({
+    id: await importedMessageId(batch.id, chunk.key, message.seq),
+    conversation_id: `import:${batch.id}:${message.conversation ?? "0"}`,
+    role: message.role,
+    content: message.content,
+    source: `import:${batch.id}`,
+    speaker: message.speaker,
+    created_at: message.time ?? chunk.day ?? "",
+    position: message.seq
+  })));
+  const now = nowIso();
+  const results = await db.batch([
+    db.prepare(`INSERT INTO memory_import_chunks (import_id, chunk_key, status, messages, chars, updated_at)
+      VALUES (?, ?, 'done', ?, ?, ?) ON CONFLICT(import_id, chunk_key) DO NOTHING`)
+      .bind(batch.id, chunk.key, records.length, records.reduce((sum, row) => sum + row.content.length, 0), now),
+    // The prior INSERT and increment run in one transaction. Concurrent retries count only once.
+    db.prepare("UPDATE memory_imports SET done_chunks = done_chunks + 1, updated_at = ? WHERE id = ? AND changes() = 1")
+      .bind(now, batch.id),
+    ...await archiveWriteStatements(db, batch.namespace, records, true)
+  ]);
+  return { ...base, status: results[0]?.meta.changes ? "done" : "skipped" };
 }
 
 function toMessageRecords(

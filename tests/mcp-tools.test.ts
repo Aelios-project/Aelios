@@ -6,13 +6,13 @@ import { timingSafeEqual } from "node:crypto";
 import worker from "../src/index";
 import { invalidateSettingsCache } from "../src/gateway/config";
 
-// MCP tool list as the Claude app sees it: eleven everyday tools named after the moment they are for,
+// MCP tool list as the Claude app sees it: everyday tools named after the moment they are for,
 // usage guidance both in initialize and in wake_up (the Claude app ignores instructions), old names still callable.
 (crypto.subtle as any).timingSafeEqual = (a: Uint8Array, b: Uint8Array) => timingSafeEqual(a, b);
 let sqlite: DatabaseSync;
 let env: any;
 
-const CORE = ["wake_up", "recall", "remember", "keep_moment", "forget", "learn_word", "read_diary", "log_conversation", "list_memories", "handoff", "notebook"];
+const CORE = ["wake_up", "recall", "remember", "keep_moment", "forget", "learn_word", "read_diary", "search_chat", "log_conversation", "list_memories", "handoff", "notebook"];
 
 beforeEach(() => {
   sqlite?.close(); sqlite = new DatabaseSync(":memory:");
@@ -67,7 +67,7 @@ test("initialize carries the usage guidance for clients that read instructions",
   assert.match(result.instructions, /notebook/);
 });
 
-test("the default list is the eleven everyday tools; review shows only with clef off, maintenance only with tools=all", async () => {
+test("the default list is the everyday tools; review shows only with clef off, maintenance only with tools=all", async () => {
   assert.deepEqual(await listNames(), CORE);
   env.CLEF_AUTO_REVIEW = "off";
   assert.deepEqual(await listNames(), [...CORE, "memory_candidates", "memory_review"]);
@@ -75,7 +75,7 @@ test("the default list is the eleven everyday tools; review shows only with clef
   assert.deepEqual(await listNames("?tools=all"), [...CORE, "memory_candidates", "memory_review", "memory_get", "memory_export"]);
 
   const tools = (await rpc("tools/list")).tools;
-  for (const name of ["wake_up", "recall", "read_diary", "list_memories"]) {
+  for (const name of ["wake_up", "recall", "read_diary", "search_chat", "list_memories"]) {
     assert.equal(tools.find((tool: any) => tool.name === name).annotations.readOnlyHint, true, name);
   }
   // The first sentence says when to call, which is all an on-demand tool catalog shows.
@@ -169,6 +169,31 @@ test("log_conversation opens its own conversation and skips lines it already has
     .all(first.conversation_id) as any[];
   assert.deepEqual(stored.map((m) => m.content), ["今天考了一套题。", "考得怎么样？", "84 分，过了！"]);
   assert.ok(stored.every((m) => m.source === "mcp"));
+});
+
+test("new chat capture is opt-in; archive search pages literal matches and survives raw retention", async () => {
+  const off = await call("log_conversation", { messages: [{ role: "user", content: "不归档的聊天。" }] });
+  assert.equal(off.structuredContent.data.saved, 1);
+  assert.deepEqual((await call("search_chat", { query: "不归档" })).structuredContent.data.hits, []);
+  env.CHAT_ARCHIVE_ENABLED = "true";
+  const messages = Array.from({ length: 13 }, (_, index) => ({ role: "user", content: `记录 ${index} Cloudflare + (D1)` }));
+  messages.push({ role: "system", content: "系统提示不应该入档。" });
+  await call("log_conversation", { messages });
+  const first = (await call("search_chat", { query: "CLOUDFLARE + (D1)" })).structuredContent.data;
+  const second = (await call("search_chat", { query: "Cloudflare + (D1)", before: first.next })).structuredContent.data;
+  assert.equal(first.hits.length, 10);
+  assert.equal(second.hits.length, 3);
+  assert.equal(second.next, null);
+  assert.equal(new Set([...first.hits, ...second.hits].map((hit: any) => hit.id)).size, 13);
+  assert.deepEqual((await call("search_chat", { query: "系统提示" })).structuredContent.data.hits, []);
+  const { deleteOldMessages } = await import("../src/db/retention");
+  await deleteOldMessages(env.DB, "default", "2099-01-01");
+  assert.equal((await call("search_chat", { query: "记录" })).structuredContent.data.hits.length, 10);
+  const { pruneChatArchive } = await import("../src/db/chatArchive");
+  assert.equal(await pruneChatArchive(env.DB, "0"), 0);
+  sqlite.prepare("UPDATE chat_archive SET stored_at = '2000-01-01'").run();
+  assert.equal(await pruneChatArchive(env.DB, "30"), 13);
+  assert.deepEqual((await call("search_chat", { query: "记录" })).structuredContent.data.hits, []);
 });
 
 test("renamed tools reach the same handlers and old names keep working", async () => {

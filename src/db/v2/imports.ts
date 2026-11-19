@@ -69,7 +69,7 @@ export async function upsertImportBatch(
   db: D1Database,
   input: {
     namespace: string;
-    kind: "chat" | "entries";
+    kind: "chat" | "entries" | "archive";
     name?: string | null;
     fingerprint: string;
     totalChunks?: number;

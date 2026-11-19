@@ -41,7 +41,11 @@ beforeEach(() => {
     const api = { bind(...values: any[]) { args = values; return api; },
       async first() { return statement.get(...args) || null; },
       async all() { return { results: statement.all(...args) }; },
-      async run() { const r = statement.run(...args); return { meta: { changes: r.changes } }; }
+      async run() {
+        if (statement.columns().length) return { results: statement.all(...args), meta: { changes: 0 } };
+        const result = statement.run(...args);
+        return { meta: { changes: result.changes } };
+      }
     }; return api;
   }, async batch(statements: any[]) {
     const results = []; for (const statement of statements) results.push(await statement.run()); return results;
@@ -106,6 +110,47 @@ async function mcp(name: string, args: any) {
   const { body } = await call("/mcp", { body: { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } } });
   return body.result;
 }
+
+test("archive import stays out of memory and preserves conversations across chunks", async () => {
+  const parsed = parseChatExport(JSON.stringify([
+    { messages: [{ role: "user", content: "先说一句。", time: "2020-01-01T10:00:00Z" },
+      { role: "assistant", content: "我想找柚子红茶。", time: "2020-01-02T10:00:00Z" }] },
+    { messages: [{ role: "user", content: "另一段会话。", time: "2020-01-02T09:00:00Z" }] }
+  ]));
+  const chunks = chatChunkByDay(parsed.messages, { timeZone: "UTC", keepConversations: true });
+  const start = { mode: "archive", fingerprint: "archive-stream", total_chunks: chunks.length, total_messages: 3 };
+  const opened = await call("/v1/import/batches", { body: start });
+  assert.equal(opened.status, 201);
+  const batch = opened.body.data.batch;
+  assert.equal(batch.kind, "archive");
+  assert.equal(batch.model, null);
+  const extractBatch = await call("/v1/import/batches", { body: { ...start, mode: "memory" } });
+  assert.notEqual(extractBatch.body.data.batch.id, batch.id);
+  for (const chunk of chunks) {
+    const body = { import_id: batch.id, chunk };
+    const written = await call("/v1/import/chat/chunk", { body });
+    assert.equal(written.status, 200);
+    assert.equal(written.body.data.result.status, "done");
+    assert.equal((await call("/v1/import/chat/chunk", { body })).body.data.result.status, "skipped");
+  }
+  const resumed = await call("/v1/import/batches", { body: start });
+  assert.equal(resumed.body.data.batch.done_chunks, chunks.length);
+  assert.deepEqual(resumed.body.data.done_keys.sort(), chunks.map((chunk) => chunk.key).sort());
+  assert.deepEqual([extractPrompts.length, clefCalls], [0, 0]);
+  for (const table of ["messages", "imported_messages", "memory_candidates", "message_fts"]) {
+    assert.deepEqual(all(`SELECT * FROM ${table}`), []);
+  }
+  assert.equal(all("SELECT * FROM chat_archive").length, 3);
+  const hits = (await mcp("search_chat", { query: "柚子" })).structuredContent.data.hits;
+  assert.deepEqual(hits.map((hit: any) => hit.text), ["我想找柚子红茶。"]);
+  const around = (await mcp("search_chat", { around: hits[0].id })).structuredContent.data.lines;
+  assert.deepEqual(around.map((line: any) => line.text), ["先说一句。", "我想找柚子红茶。"]);
+  assert.equal(around[1].hit, true);
+  assert.deepEqual((await mcp("search_chat", { query: "柚子", namespace: "other" })).structuredContent.data.hits, []);
+  assert.equal((await mcp("search_chat", { around: hits[0].id, namespace: "other" })).isError, true);
+  assert.equal((await call(`/v1/raw/${hits[0].id}`, { method: "DELETE" })).status, 200);
+  assert.deepEqual((await mcp("search_chat", { query: "柚子" })).structuredContent.data.hits, []);
+});
 
 test("rewriting a memory in place keeps the old text as a revision", async () => {
   memory("m-coffee", "咲咲喝冰美式。", "preference:coffee");
