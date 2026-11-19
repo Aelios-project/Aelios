@@ -1361,7 +1361,7 @@ tailwind.config = { corePlugins: { preflight: false } };
         <div class="grid gap-3 md:grid-cols-3" role="radiogroup" :aria-label="L('要做什么', 'What to do')">
           <button type="button" role="radio" @click="transferMode = 'chat'" class="mode-card" :class="transferMode === 'chat' ? 'is-active' : ''" :aria-checked="transferMode === 'chat' ? 'true' : 'false'">
             <span class="ico">${I.chat}</span>
-            <span><span class="block font-semibold">${t("导入聊天记录", "Import chat history")}</span><span class="mt-1 block text-[13px] muted">${t("ChatGPT、Claude、酒馆的导出文件，自动找出值得记的。", "Exports from ChatGPT, Claude or SillyTavern. Finds what’s worth remembering.")}</span></span>
+            <span><span class="block font-semibold">${t("导入聊天记录", "Import chat history")}</span><span class="mt-1 block text-[13px] muted">${t("支持 ChatGPT、Claude 和酒馆的导出文件。", "Supports exports from ChatGPT, Claude or SillyTavern.")}</span></span>
           </button>
           <button type="button" role="radio" @click="transferMode = 'entries'" class="mode-card" :class="transferMode === 'entries' ? 'is-active' : ''" :aria-checked="transferMode === 'entries' ? 'true' : 'false'">
             <span class="ico">${I.list}</span>
@@ -1379,14 +1379,14 @@ tailwind.config = { corePlugins: { preflight: false } };
             <ol class="steps" :aria-label="L('进度', 'Progress')">
               <li :class="chatStep() > 1 ? 'is-done' : 'is-now'"><span class="n" x-text="chatStep() > 1 ? '✓' : '1'"></span><span x-text="L('选文件', 'Pick a file')"></span></li>
               <li class="sep" aria-hidden="true"></li>
-              <li :class="chatStep() > 2 ? 'is-done' : chatStep() === 2 ? 'is-now' : ''"><span class="n" x-text="chatStep() > 2 ? '✓' : '2'"></span><span x-text="L('整理中', 'Reading')"></span></li>
+              <li :class="chatStep() > 2 ? 'is-done' : chatStep() === 2 ? 'is-now' : ''"><span class="n" x-text="chatStep() > 2 ? '✓' : '2'"></span><span x-text="transfer.chatMode === 'archive' ? L('归档', 'Archive') : L('整理中', 'Reading')"></span></li>
               <li class="sep" aria-hidden="true"></li>
-              <li :class="chatStep() === 3 ? 'is-now' : ''"><span class="n">3</span><span x-text="L('去待审确认', 'Confirm in Review')"></span></li>
+              <li :class="chatStep() === 3 ? 'is-now' : ''"><span class="n">3</span><span x-text="transfer.chatMode === 'archive' ? L('完成', 'Done') : L('去待审确认', 'Confirm in Review')"></span></li>
             </ol>
           </div>
           <template x-if="!transfer.chat">
             <div class="flex flex-col items-start gap-3">
-              <p class="text-[13px] muted">${t("认得 ChatGPT、Claude 导出的 conversations.json，酒馆的 .jsonl，还有「名字：内容」一句一行的文本。文件在浏览器里拆开，按天切段交给整理用的模型读。", "Reads ChatGPT and Claude conversations.json exports, SillyTavern .jsonl, and plain “Name: text” lines. The file is split in your browser and read day by day by the nightly-run model.")}</p>
+              <p class="text-[13px] muted">${t("认得 ChatGPT、Claude 导出的 conversations.json，酒馆的 .jsonl，还有「名字：内容」一句一行的文本。文件在浏览器里拆开，再分段导入。", "Reads ChatGPT and Claude conversations.json exports, SillyTavern .jsonl, and plain “Name: text” lines. Your browser splits the file into parts for import.")}</p>
               <label class="btn btn-primary cursor-pointer">${I.upload}<span x-text="transfer.chatLoading ? L('在读文件…', 'Reading file…') : L('选聊天记录文件', 'Choose a chat file')"></span>
                 <input type="file" accept=".json,.jsonl,.txt,.md,.markdown" class="hidden" @change="loadChatFile($event)">
               </label>
@@ -1410,20 +1410,27 @@ tailwind.config = { corePlugins: { preflight: false } };
                 <div class="flex flex-wrap gap-2">
                   <template x-for="speaker in transfer.chat.speakers" :key="speaker.name">
                     <label class="pill inline-flex cursor-pointer items-center gap-2" :class="speaker.isUser ? 'is-active' : ''">
-                      <input type="checkbox" :checked="speaker.isUser" @change="speaker.isUser = $event.target.checked; rechunkChat()">
+                      <input type="checkbox" :checked="speaker.isUser" @change="speaker.isUser = $event.target.checked; rechunkChat()" :disabled="transfer.chatRun && transfer.chatRun.running">
                       <span x-text="speaker.name"></span><span class="count" x-text="speaker.count"></span>
                     </label>
                   </template>
                 </div>
               </div>
-              <label x-show="transfer.info && transfer.info.clef.available" class="check items-start">
+              <label class="block">
+                <span class="label">${t("导入方式", "Import mode")}</span>
+                <select class="field" x-model="transfer.chatMode" @change="$nextTick(() => rechunkChat())" :disabled="transfer.chatRun && transfer.chatRun.running">
+                  <option value="memory">${t("提取记忆，放进待审", "Extract memories for Review")}</option>
+                  <option value="archive">${t("仅归档原文，供关键词搜索", "Archive text for keyword search")}</option>
+                </select>
+              </label>
+              <label x-show="transfer.chatMode === 'memory' && transfer.info && transfer.info.clef.available" class="check items-start">
                 <input type="checkbox" x-model="transfer.chatClef" class="mt-0.5">
                 <span>${t("让 clef 顺手给每条打个分，待审页能按分筛。只是参考，会多用一点 Workers AI。", "Let clef score each one so you can filter in Review. Only a hint; uses a little more Workers AI.")}</span>
               </label>
               <template x-if="transfer.chatRun">
                 <div class="flex flex-col gap-2">
                   <div class="flex flex-wrap items-baseline justify-between gap-2 text-[13px]">
-                    <span x-text="L('已处理 ', '') + transfer.chatRun.done + ' / ' + transfer.chatRun.total + L(' 段 · 找到 ', ' parts read · ') + transfer.chatRun.candidates + L(' 条候选', ' candidates found')"></span>
+                    <span x-text="L('已处理 ', '') + transfer.chatRun.done + ' / ' + transfer.chatRun.total + L(' 段', ' parts')"></span>
                     <span class="font-semibold" x-text="chatRunPercent() + '%'"></span>
                   </div>
                   <div class="bar" role="progressbar" :aria-valuenow="chatRunPercent()" aria-valuemin="0" aria-valuemax="100" :aria-label="L('导入进度', 'Import progress')"><div :style="'width:' + chatRunPercent() + '%'"></div></div>
@@ -1438,7 +1445,8 @@ tailwind.config = { corePlugins: { preflight: false } };
               </div>
               <div class="flex flex-col gap-1 text-xs muted">
                 <span>${t("页面开着才会跑。关了也没事，下次选同一个文件、同样的勾选，做完的段会跳过，接着做。", "It only runs while this page is open. Closing is fine: pick the same file with the same ticks next time and it picks up where it left off.")}</span>
-                <span>${t("找出来的先进待审，你点了才算数。原话只留被引用的那几句，不会被 7 天清理吃掉。", "Everything found goes to Review first and counts only once you confirm. Only the quoted lines are kept, outside the 7-day cleanup.")}</span>
+                <span x-show="transfer.chatMode === 'memory'">${t("候选先进待审。只长期保留被引用的原话。", "Candidates go to Review. Only the lines they cite are kept long-term.")}</span>
+                <span x-show="transfer.chatMode === 'archive'">${t("归档后可用 MCP search_chat 查原话和前后文。归档不花模型 token。", "Use MCP search_chat to look up words and nearby messages. Archiving uses no model tokens.")}</span>
               </div>
             </div>
           </template>
@@ -2106,7 +2114,7 @@ function memoryAdmin() {
     reviewTab: 'daily',
     importReview: { batches: [], importId: '', filter: 'all', items: [], counts: { pending: 0, clef_yes: 0, clef_no: 0 }, offset: 0, more: false, loading: false, bulk: null },
     transferMode: 'chat',
-    transfer: { info: null, exporting: false, entriesText: '', entriesName: '', preview: null, entriesMode: 'direct', entriesBusy: false, entriesRun: null, chat: null, chatLoading: false, chatClef: true, chatRun: null, batches: [] },
+    transfer: { info: null, exporting: false, entriesText: '', entriesName: '', preview: null, entriesMode: 'direct', entriesBusy: false, entriesRun: null, chat: null, chatLoading: false, chatMode: 'memory', chatClef: true, chatRun: null, batches: [] },
 
     // ===== 中英两套文字 =====
     L(zh, en) {
@@ -4313,24 +4321,25 @@ function memoryAdmin() {
         const data = await this.request(this.withNamespace('/v1/import/batches?limit=50'));
         if (revision !== this.spaceRevision) return;
         this.transfer.batches = data.data || [];
-        this.importReview.batches = this.transfer.batches;
+        this.importReview.batches = this.transfer.batches.filter(function(batch) { return batch.kind !== 'archive'; });
       } catch (error) {
         if (revision === this.spaceRevision) this.notify(error.message);
       }
     },
     importBatchLabel(batch) {
-      const kind = batch.kind === 'chat' ? this.L('聊天记录', 'Chat history') : this.L('条目', 'List');
+      const kind = batch.kind === 'archive' ? this.L('聊天档案', 'Chat archive') : batch.kind === 'chat' ? this.L('聊天记录', 'Chat history') : this.L('条目', 'List');
       const range = batch.first_date ? this.L('（', ' (') + batch.first_date + (batch.last_date && batch.last_date !== batch.first_date ? this.L(' 到 ', ' to ') + batch.last_date : '') + this.L('）', ')') : '';
       return kind + ' · ' + (batch.name || this.L('没起名', 'untitled')) + range;
     },
     importBatchDetail(batch) {
+      if (batch.kind === 'archive') return (batch.done_chunks || 0) + ' / ' + (batch.total_chunks || 0) + this.L(' 段已归档', ' parts archived');
       const review = this.L('待审 ' + (batch.pending || 0) + '，记住 ' + (batch.approved || 0) + '，丢弃 ' + (batch.discarded || 0), (batch.pending || 0) + ' waiting, ' + (batch.approved || 0) + ' remembered, ' + (batch.discarded || 0) + ' discarded');
       if (batch.kind !== 'chat') return this.L((batch.total_messages || 0) + ' 条，' + (batch.candidates || 0) + ' 条进了待审（' + review + '）', (batch.total_messages || 0) + ' items, ' + (batch.candidates || 0) + ' sent to Review (' + review + ')');
       return this.L('做了 ' + (batch.done_chunks || 0) + ' / ' + (batch.total_chunks || 0) + ' 段，' + (batch.candidates || 0) + ' 条候选（' + review + '），模型 ' + (batch.model_calls || 0) + ' 次，', (batch.done_chunks || 0) + ' / ' + (batch.total_chunks || 0) + ' parts, ' + (batch.candidates || 0) + ' candidates (' + review + '), ' + (batch.model_calls || 0) + ' model calls, ')
         + this.fmtTokens(batch.tokens_in) + this.L(' 进 / ', ' in / ') + this.fmtTokens(batch.tokens_out) + this.L(' 出 token', ' out tokens') + (batch.clef_calls ? ', clef ' + batch.clef_calls : '');
     },
     batchDone(batch) {
-      return batch.kind !== 'chat' || (Number(batch.total_chunks) > 0 && Number(batch.done_chunks) >= Number(batch.total_chunks));
+      return batch.kind === 'entries' || (Number(batch.total_chunks) > 0 && Number(batch.done_chunks) >= Number(batch.total_chunks));
     },
     batchStatusLabel(batch) {
       if (this.batchDone(batch)) return this.L('完成', 'Done');
@@ -4654,7 +4663,7 @@ function memoryAdmin() {
       const users = chat.speakers.filter(function(speaker) { return speaker.isUser; }).map(function(speaker) { return speaker.name; });
       const messages = chat.needsRoles ? window.AeliosChat.chatApplyRoles(chatParsed.messages, users) : chatParsed.messages;
       const limits = (this.transfer.info && this.transfer.info.chunk) || { default_messages: 60, default_chars: 30000 };
-      chatChunks = window.AeliosChat.chatChunkByDay(messages, { timeZone: this.chatTimeZone(), maxMessages: limits.default_messages, maxChars: limits.default_chars });
+      chatChunks = window.AeliosChat.chatChunkByDay(messages, { timeZone: this.chatTimeZone(), maxMessages: limits.default_messages, maxChars: limits.default_chars, keepConversations: this.transfer.chatMode === 'archive' });
       const days = chatChunks.map(function(chunk) { return chunk.day; }).filter(Boolean).sort();
       chat.chunks = chatChunks.length;
       chat.chars = chatChunks.reduce(function(sum, chunk) { return sum + chunk.chars; }, 0);
@@ -4671,6 +4680,7 @@ function memoryAdmin() {
       const formats = { chatgpt: this.L('ChatGPT 导出', 'ChatGPT export'), claude: this.L('Claude 导出', 'Claude export'), sillytavern: this.L('酒馆聊天', 'SillyTavern chat'), json: 'JSON', jsonl: 'JSONL', text: this.L('文本', 'Text') };
       const model = this.transfer.info ? this.transfer.info.model : '';
       const kind = formats[chat.format] || chat.format;
+      if (this.transfer.chatMode === 'archive') return kind + ' · ' + chat.messageCount + this.L(' 条消息 · ', ' messages · ') + chat.chunks + this.L(' 段', ' parts');
       if (this.lang === 'en') {
         return kind + ' · ' + (chat.conversations > 1 ? chat.conversations + ' conversations · ' : '') + chat.messageCount + ' messages'
           + (chat.firstDate ? ' · ' + chat.firstDate + (chat.lastDate !== chat.firstDate ? ' to ' + chat.lastDate : '') : ' · no dates found')
@@ -4684,7 +4694,9 @@ function memoryAdmin() {
     },
     async runChatImport() {
       const chat = this.transfer.chat;
-      if (!chat || !chatChunks.length) return;
+      const chunks = chatChunks;
+      const mode = this.transfer.chatMode;
+      if (!chat || !chunks.length || (this.transfer.chatRun && this.transfer.chatRun.running)) return;
       if (chat.needsRoles && !chat.speakers.some(function(speaker) { return speaker.isUser; })) {
         this.notify(this.L('先勾上哪个名字是你', 'Tick which name is you first'));
         return;
@@ -4693,7 +4705,7 @@ function memoryAdmin() {
       const ns = this.namespace;
       const limits = (this.transfer.info && this.transfer.info.chunk) || { default_messages: 60, default_chars: 30000 };
       const fingerprint = (await this.sha256([chat.hash, chat.rolesKey, limits.default_messages, limits.default_chars, this.chatTimeZone()].join('|'))).slice(0, 40);
-      this.transfer.chatRun = { running: true, stop: false, namespace: ns, importId: '', total: chatChunks.length, done: 0, candidates: 0, merged: 0, duplicates: 0, modelCalls: 0, tokensIn: 0, tokensOut: 0, estimated: false, clefCalls: 0, errors: 0, lastError: '', current: '' };
+      this.transfer.chatRun = { mode: mode, running: true, stop: false, namespace: ns, importId: '', total: chunks.length, done: 0, candidates: 0, merged: 0, duplicates: 0, modelCalls: 0, tokensIn: 0, tokensOut: 0, estimated: false, clefCalls: 0, errors: 0, lastError: '', current: '' };
       const run = this.transfer.chatRun;
       const self = this;
       const applyBatch = function(batch) {
@@ -4708,13 +4720,12 @@ function memoryAdmin() {
       try {
         const start = await this.request(this.nsPath('/v1/import/batches', ns), {
           method: 'POST',
-          body: JSON.stringify({ namespace: ns, fingerprint: fingerprint, name: chat.name, total_chunks: chatChunks.length, total_messages: chat.messageCount, total_chars: chat.chars, first_date: chat.firstDate || null, last_date: chat.lastDate || null })
+          body: JSON.stringify({ namespace: ns, mode: mode, fingerprint: fingerprint, name: chat.name, total_chunks: chunks.length, total_messages: chat.messageCount, total_chars: chat.chars, first_date: chat.firstDate || null, last_date: chat.lastDate || null })
         });
         const batch = start.data.batch;
         run.importId = batch.id;
         applyBatch(batch);
         const done = new Set(start.data.done_keys || []);
-        const chunks = chatChunks;
         let streak = 0;
         for (const chunk of chunks) {
           if (run.stop) break;
@@ -4764,6 +4775,7 @@ function memoryAdmin() {
     chatRunLabel() {
       const run = this.transfer.chatRun;
       if (!run) return '';
+      if (run.mode === 'archive') return (run.running ? this.L('在归档', 'Archiving') : (run.done >= run.total ? this.L('归档完成', 'Archive complete') : this.L('归档已暂停', 'Archive paused'))) + (run.errors ? this.L('，失败 ' + run.errors + ' 段', ', ' + run.errors + ' parts failed') : '');
       if (this.lang === 'en') {
         const headEn = run.running ? 'Reading ' + (run.current || '…') + '. ' : (run.done >= run.total ? 'Done. ' : 'Stopped here. ');
         return headEn + run.done + ' / ' + run.total + ' parts read, ' + run.candidates + ' candidates sent to Review'

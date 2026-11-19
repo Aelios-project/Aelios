@@ -3,6 +3,7 @@ import { HANDOFF_MAX, HandoffError, residentHandoffMetadata, saveResidentHandoff
 import { requireScope } from "../auth/scopes";
 import { getOrCreateConversation } from "../db/conversations";
 import { createMemory, getMemoryById, listMemoriesPage, softDeleteMemory, updateMemory } from "../db/memories";
+import { chatArchiveEnabled } from "../db/chatArchive";
 import { getMessagesByIds, listMessagesByNamespaceInRange, saveIngestMessages } from "../db/messages";
 import { runDailyMemoryDigest } from "../memory/dailyDigest";
 import { writeDiaryAfterDream } from "../memory/diaryWriter";
@@ -415,7 +416,8 @@ async function handleIngestMemories(
     conversationId: conversation.id,
     namespace,
     source,
-    messages
+    messages,
+    archive: chatArchiveEnabled(env) && !source.startsWith("aelios-resident:")
   });
 
   if (handoff) {

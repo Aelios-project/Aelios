@@ -1,3 +1,4 @@
+import { archiveWriteStatements, chatArchiveEnabled, type ArchiveMessage } from "../db/chatArchive";
 import type { Env } from "../types";
 import { insertMessageFts } from "../memory/fts";
 import { captureRememberNow } from "../memory/rememberNow";
@@ -62,11 +63,15 @@ export async function persistExchange(env: Env, e: GatewayExchange): Promise<voi
       e.model, e.provider, e.httpStatus, e.completion, e.createdAt)];
   // Auxiliary tasks and incomplete outputs never become relationship memories.
   const added: Array<{ index: number; id: string; content: string }> = [];
+  const archive: ArchiveMessage[] = [];
+  const shouldArchive = chatArchiveEnabled(env);
   if (e.kind !== "auxiliary") {
     statements.push(env.DB.prepare("INSERT OR IGNORE INTO conversations (id, namespace, created_at, updated_at) VALUES (?, ?, ?, ?)")
       .bind(e.conversationId, e.namespace, e.createdAt, e.createdAt));
-    const addMessage = (id: string, role: string, content: string, seq: number) => {
+    const addMessage = (id: string, role: ArchiveMessage["role"], content: string, seq: number) => {
       added.push({ index: statements.length, id, content });
+      if (shouldArchive) archive.push({ id, role, content, conversation_id: e.conversationId,
+        source: `gateway:${e.profile}`, created_at: e.createdAt, position: Date.parse(e.createdAt) });
       statements.push(env.DB.prepare(`INSERT OR IGNORE INTO messages
       (id, conversation_id, namespace, role, content, source, client_message_hash, upstream_model,
        upstream_provider, request_model, stream, finish_reason, created_at, seq)
@@ -77,6 +82,7 @@ export async function persistExchange(env: Env, e: GatewayExchange): Promise<voi
     if (e.kind === "human" && e.userText && e.completion !== "truncated") addMessage(e.userId, "user", e.userText, 0);
     if (e.completion === "complete" && spoken) addMessage(`${e.id}:assistant`, "assistant", spoken, 1);
   }
+  if (archive.length) statements.push(...await archiveWriteStatements(env.DB, e.namespace, archive));
   const results = await env.DB.batch(statements);
   // Index only rows this batch actually inserted. An ignored insert means the row (and its
   // FTS entry) already exists: the user line was usually captured on the request path by

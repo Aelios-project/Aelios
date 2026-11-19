@@ -91,6 +91,8 @@ export interface Env {
   GITHUB_DAILY_TOKEN?: string;
   EMPTY_MEMORY_MIN_CHARS?: string;
   MESSAGES_RETENTION_DAYS?: string;
+  CHAT_ARCHIVE_ENABLED?: string;
+  CHAT_ARCHIVE_RETENTION_DAYS?: string;
   ENABLE_MEMORY_FILTER?: string;
   ENABLE_MEMORY_RERANKER?: string;
   MEMORY_RERANKER_MODEL?: string;

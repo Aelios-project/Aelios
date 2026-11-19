@@ -29,6 +29,7 @@ import { CANONICAL_MEMORY_TYPES } from "../memory/canonicalTypes";
 import { readDreamModel, readDreamTimeZoneFromEnv } from "../memory/dreamEnv";
 import { loadSpeakersForNamespace } from "../memory/speakers";
 import {
+  archiveChatChunk,
   CHAT_CHUNK_DEFAULT_CHARS,
   CHAT_CHUNK_DEFAULT_MESSAGES,
   CHAT_CHUNK_MAX_CHARS,
@@ -197,18 +198,22 @@ async function handleStartBatch(request: Request, env: Env, profile: KeyProfile)
   const namespace = resolveNamespace(profile, body.namespace ?? new URL(request.url).searchParams.get("namespace"));
   const fingerprint = readString(body.fingerprint);
   if (!fingerprint || fingerprint.length > 128) return openAiError("fingerprint is required", 400);
+  if (body.mode !== undefined && body.mode !== "memory" && body.mode !== "archive") {
+    return openAiError("mode must be memory or archive", 400);
+  }
+  const archive = body.mode === "archive";
   const day = (value: unknown) => (typeof value === "string" && DAY_RE.test(value) ? value : null);
   const result = await upsertImportBatch(env.DB, {
     namespace,
-    kind: "chat",
+    kind: archive ? "archive" : "chat",
     name: readString(body.name)?.slice(0, 200) ?? null,
-    fingerprint: `chat:${fingerprint}`,
+    fingerprint: `${archive ? "archive" : "chat"}:${fingerprint}`,
     totalChunks: readNonNegativeInt(body.total_chunks, 0, 1_000_000),
     totalMessages: readNonNegativeInt(body.total_messages, 0, 100_000_000),
     totalChars: readNonNegativeInt(body.total_chars, 0, 2_000_000_000),
     firstDate: day(body.first_date),
     lastDate: day(body.last_date),
-    model: readDreamModel(env)
+    model: archive ? null : readDreamModel(env)
   });
   return json({ data: { batch: result.batch, done_keys: result.doneKeys, created: result.created } }, { status: result.created ? 201 : 200 });
 }
@@ -222,9 +227,14 @@ async function handleChatChunk(request: Request, env: Env, profile: KeyProfile):
   const importId = readString(body.import_id);
   if (!importId) return openAiError("import_id is required", 400);
   const batch = await getImportBatch(env.DB, { namespace, id: importId });
-  if (!batch || batch.kind !== "chat") return openAiError("Import batch not found", 404);
-  const checked = validateChatChunk(body.chunk);
+  if (!batch || (batch.kind !== "chat" && batch.kind !== "archive")) return openAiError("Import batch not found", 404);
+  const checked = validateChatChunk(body.chunk, batch.kind === "archive");
   if ("error" in checked) return openAiError(checked.error, 400);
+  if (batch.kind === "archive") {
+    const result = await archiveChatChunk(env.DB, batch, checked.chunk);
+    const after = await getImportBatch(env.DB, { namespace, id: importId });
+    return json({ data: { result, batch: after } });
+  }
 
   const speakers = await loadSpeakersForNamespace(env, namespace);
   const result = await importChatChunk(env, {

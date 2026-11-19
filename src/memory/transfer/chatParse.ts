@@ -21,6 +21,7 @@ export interface ChatMessage {
   time: string | null;
   /** 只知道哪天 (纯文本里的日期小标题) 时的 YYYY-MM-DD */
   date: string | null;
+  conversation?: string;
 }
 
 export interface ChatSpeaker {
@@ -41,7 +42,7 @@ export interface ParsedChat {
 export interface ChatChunk {
   key: string;
   day: string | null;
-  messages: Array<{ seq: number; role: "user" | "assistant"; content: string; time: string | null; speaker: string | null }>;
+  messages: Array<{ seq: number; role: "user" | "assistant"; content: string; time: string | null; speaker: string | null; conversation?: string }>;
   chars: number;
 }
 
@@ -490,11 +491,11 @@ export function parseChatExport(text: string, fileName?: string): ParsedChat {
     // 好几段对话：按时间排到一起 (没时间的跟着前一条)，同一天的才切在一段里。
     const keyed: Array<{ key: string; index: number; message: ChatMessage }> = [];
     let index = 0;
-    for (const group of groups) {
+    for (const [conversation, group] of groups.entries()) {
       let carry = "";
       for (const message of group) {
         carry = message.time || message.date || carry;
-        keyed.push({ key: carry, index, message });
+        keyed.push({ key: carry, index, message: { ...message, conversation: String(conversation) } });
         index += 1;
       }
     }
@@ -525,10 +526,11 @@ export function chatApplyRoles(messages: ChatMessage[], userSpeakers: string[]):
 }
 
 /** ISO 时间在某个时区是哪天。 */
-export function chatDayLabel(iso: string, timeZone: string): string {
+export function chatDayLabel(iso: string, timeZone: string, format?: Intl.DateTimeFormat): string {
   const date = new Date(iso);
   try {
-    const parts = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
+    const formatter = format ?? new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
+    const parts = formatter.formatToParts(date);
     const values: Record<string, string> = {};
     for (const part of parts) values[part.type] = part.value;
     return `${values.year}-${values.month}-${values.day}`;
@@ -544,18 +546,21 @@ export function chatDayLabel(iso: string, timeZone: string): string {
  */
 export function chatChunkByDay(
   messages: ChatMessage[],
-  options: { timeZone: string; maxMessages?: number; maxChars?: number }
+  options: { timeZone: string; maxMessages?: number; maxChars?: number; keepConversations?: boolean }
 ): ChatChunk[] {
   const maxMessages = options.maxMessages || 60;
   const maxChars = options.maxChars || 30000;
   const chunks: ChatChunk[] = [];
   const perDay = new Map<string, number>();
+  let formatter: Intl.DateTimeFormat | undefined;
+  try { formatter = new Intl.DateTimeFormat("en-CA", { timeZone: options.timeZone, year: "numeric", month: "2-digit", day: "2-digit" }); }
+  catch { /* chatDayLabel falls back to UTC */ }
   let current: ChatChunk | null = null;
   let lastDay: string | null = null;
   let seq = 0;
   for (const message of messages) {
     if (message.role !== "user" && message.role !== "assistant") continue;
-    const day: string | null = message.time ? chatDayLabel(message.time, options.timeZone) : message.date || lastDay;
+    const day: string | null = message.time ? chatDayLabel(message.time, options.timeZone, formatter) : message.date || lastDay;
     lastDay = day;
     const length = message.content.length;
     const fits =
@@ -571,7 +576,8 @@ export function chatChunkByDay(
       chunks.push(current);
     }
     const target = current as ChatChunk;
-    target.messages.push({ seq, role: message.role, content: message.content, time: message.time, speaker: message.speaker });
+    target.messages.push({ seq, role: message.role, content: message.content, time: message.time, speaker: message.speaker,
+      ...(options.keepConversations && message.conversation !== undefined ? { conversation: message.conversation } : {}) });
     target.chars += length;
     seq += 1;
   }

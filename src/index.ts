@@ -34,6 +34,7 @@ import { handleNotebookApi } from "./api/notebook";
 import { handleHandoffApi } from "./api/handoff";
 import { handleRawMessage } from "./api/raw";
 import { handleImportApi } from "./api/transfer";
+import { pruneChatArchive } from "./db/chatArchive";
 import { handleModelCatalog, handleModelTest, handleModels } from "./api/models";
 import { handleRelationsGraph } from "./api/relations";
 import { runCandidateJudge } from "./memory/candidateJudge";
@@ -306,6 +307,11 @@ export default {
     }
 
     ctx.waitUntil(keepChatGptAlive(deployed));
+    if (env.CHAT_ARCHIVE_RETENTION_DAYS) {
+      ctx.waitUntil(pruneChatArchive(env.DB, env.CHAT_ARCHIVE_RETENTION_DAYS).catch((error) =>
+        console.error("chat archive retention failed", error)
+      ));
+    }
 
     ctx.waitUntil(
       (async () => {
