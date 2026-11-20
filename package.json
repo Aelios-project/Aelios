@@ -17,7 +17,7 @@
     "test:diary": "node --import tsx --test tests/diary-grounding.test.ts",
     "test:admin": "node --import tsx --test tests/admin-selector.test.ts",
     "test": "node --import tsx --test tests/*.test.ts",
-    "verify": "npm run typecheck && npm test && node scripts/verify-vector-memory-write.mjs && node --import tsx scripts/verify-dedup-gate.mjs && node --import tsx scripts/verify-sanitize.mjs && node --import tsx scripts/verify-week-blocks.mjs",
+    "verify": "npm run typecheck && npm test && node scripts/verify-vector-memory-write.mjs && node --import tsx scripts/verify-dedup-gate.mjs && node --import tsx scripts/verify-sanitize.mjs && node --import tsx scripts/verify-week-blocks.mjs && node scripts/verify-d1-migrations.mjs",
     "vectorize:clean": "node scripts/clean-vectorize-memory.mjs",
     "vectorize:clean:llm": "node scripts/llm-clean-vectorize-memory.mjs",
     "memory:deep-clean": "node scripts/deep-clean-memories.mjs",
