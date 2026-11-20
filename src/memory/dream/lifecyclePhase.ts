@@ -33,6 +33,8 @@ export async function applyDreamV2(
     messageIds: string[];
     contextMemoryIds?: string[];
     extracted: ExtractedMemory[];
+    requireCommit?: boolean;
+    writeDailyDraft?: boolean;
   }
 ): Promise<{
   added: number;
@@ -55,7 +57,7 @@ export async function applyDreamV2(
     queuedCandidates += await queueDreamExtractedMemories(env, {
       namespace,
       memories: extracted, digestDecisions: digest.decisions, contextIds: input.contextMemoryIds,
-      messageIds
+      messageIds, requireCommit: input.requireCommit
     });
     await recordDreamReviewProposal(env, { namespace, dateLabel, digest, messageIds });
     return { added: 0, updated: 0, deleted: 0, queuedCandidates, longtail: 0, errors: [] };
@@ -64,7 +66,7 @@ export async function applyDreamV2(
   queuedCandidates += await queueDreamExtractedMemories(env, {
     namespace,
     memories: extracted, digestDecisions: digest.decisions, contextIds: input.contextMemoryIds,
-    messageIds
+    messageIds, requireCommit: input.requireCommit
   });
 
   for (const item of digest.memories_to_add ?? []) {
@@ -179,14 +181,16 @@ export async function applyDreamV2(
     }
   }
 
-  await upsertDailyLog(env.DB, {
-    namespace,
-    date: dateLabel,
-    title: digest.title ?? dateLabel,
-    summary: digest.summary ?? "",
-    sourceMessageIds: evidence(digest.source_message_ids),
-    contextRefs: origin(digest.source_message_ids).context_refs
-  });
+  if (input.writeDailyDraft !== false) {
+    await upsertDailyLog(env.DB, {
+      namespace,
+      date: dateLabel,
+      title: digest.title ?? dateLabel,
+      summary: digest.summary ?? "",
+      sourceMessageIds: evidence(digest.source_message_ids),
+      contextRefs: origin(digest.source_message_ids).context_refs
+    });
+  }
 
   return { added: 0, updated, deleted, queuedCandidates, longtail: 0, errors };
 }
@@ -202,6 +206,8 @@ export async function runLifecyclePhase(
     messageIds: string[];
     contextMemoryIds?: string[];
     extracted: ExtractedMemory[];
+    requireCommit?: boolean;
+    writeDailyDraft?: boolean;
   }
 ): Promise<Awaited<ReturnType<typeof applyDreamV2>>> {
   return applyDreamV2(env, input);

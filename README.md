@@ -305,6 +305,8 @@ With the clef review switched off, `memory_candidates` and `memory_review` are l
 
 ### Dream execution and failure status
 
+Rolling memory defaults to off. In Settings, choose **Shadow** to compare rolling drafts and nightly outputs on the Dream page. See [rolling memory](docs/memory-gateway.md#rolling-memory).
+
 The admin Nightly page submits non-dry manual Dream runs to the existing durable `MEMORY_QUEUE`. Acceptance returns a run ID immediately; after acceptance, closing the browser does not cancel the queued work. The panel polls status every five seconds and can find the task again after a reload. Queue batches contain one message so several expensive Dream jobs do not share one invocation's execution budget.
 
 API clients opt in with `POST /v1/dream/run` and `{"background":true}` (plus the usual optional namespace, date and force). A successful enqueue returns HTTP **202** with `data.run_id` and `data.status="queued"`; use `GET /v1/dream/status` to follow it. As with the legacy endpoint, each manual job handles one batch, not necessarily the whole date; use the cursor to check whether more batches remain. Missing queues and failed acceptance return **503**. Without `background:true`, the old synchronous contract remains; dry-runs also stay synchronous.

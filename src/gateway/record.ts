@@ -26,6 +26,7 @@ export interface GatewayExchange {
   assistantText: string;
   captureKind?: "visible" | "includes_tool";
   model: string;
+  requestedModel?: string;
   provider: string;
   httpStatus: number;
   completion: "complete" | "incomplete" | "failed" | "truncated";
@@ -46,7 +47,7 @@ export async function prepareExchange(request: Request, body: Body, identity: Id
     request.headers.get("x-aelios-request-id") || ""]))}`;
   return { type: "gateway_exchange", id, userId, namespace, profile: identity.slug,
     conversationId, protocol, kind: turn.kind, userText: turn.text.slice(0, TEXT_LIMIT), assistantText: "",
-    model: "", provider: "", httpStatus: 0, completion: turn.text.length > TEXT_LIMIT ? "truncated" : "incomplete",
+    model: "", requestedModel: body.model, provider: "", httpStatus: 0, completion: turn.text.length > TEXT_LIMIT ? "truncated" : "incomplete",
     createdAt: new Date().toISOString(), stream: body.stream === true };
 }
 
@@ -78,7 +79,7 @@ export async function persistExchange(env: Env, e: GatewayExchange): Promise<voi
        upstream_provider, request_model, stream, finish_reason, created_at, seq, capture_kind)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .bind(id, e.conversationId, e.namespace, role, content, `gateway:${e.profile}`, id,
-        e.model, e.provider, e.profile, e.stream ? 1 : 0, e.completion, e.createdAt, seq, role === "assistant" ? e.captureKind ?? null : "visible"));
+      e.model, e.provider, e.requestedModel ?? e.profile, e.stream ? 1 : 0, e.completion, e.createdAt, seq, role === "assistant" ? e.captureKind ?? null : "visible"));
     };
     if (e.kind === "human" && e.userText && e.completion !== "truncated") addMessage(e.userId, "user", e.userText, 0);
     if (e.completion === "complete" && spoken) addMessage(`${e.id}:assistant`, "assistant", spoken, 1);
@@ -138,7 +139,7 @@ export async function persistHumanUtterance(
        upstream_provider, request_model, stream, finish_reason, created_at, seq)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .bind(e.userId, e.conversationId, e.namespace, "user", e.userText, `gateway:${e.profile}`, e.userId,
-        e.model, e.provider, e.profile, e.stream ? 1 : 0, e.completion, e.createdAt, 0)
+        e.model, e.provider, e.requestedModel ?? e.profile, e.stream ? 1 : 0, e.completion, e.createdAt, 0)
   ]);
   // A client retry of the same turn hits the existing row, which is already indexed.
   const indexed = (inserted?.meta?.changes ?? 0) > 0 && await insertMessageFts(env.DB, {

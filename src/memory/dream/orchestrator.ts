@@ -1,6 +1,6 @@
 import { listMessagesByNamespaceInRange } from "../../db/messages";
 import { readCursor, writeCursor } from "../../db/retention";
-import type { Env, MemoryApiRecord } from "../../types";
+import type { Env, MemoryApiRecord, MessageRecord } from "../../types";
 import { newId } from "../../utils/ids";
 import { nowIso } from "../../utils/time";
 import { readString } from "../../utils/parse";
@@ -39,6 +39,7 @@ import {
 } from "./helpers";
 import { buildDreamRoutingPlan, runJudgePhase } from "./judgePhase";
 import { runLifecyclePhase } from "./lifecyclePhase";
+import { claimNightlyExtraction, listNightlyInboxBacklog, markNightlyExtracted, releaseNightlyExtraction } from "../rolling/nightly";
 
 // Re-export date/env surface so external importers of dailyDigest keep working.
 export {
@@ -80,7 +81,7 @@ export async function runDreamBackfill(
     const { startIso, endIso } = getDateRangeForLabel(dateLabel, timeZone);
     const cursor = await readDreamCursorValue(env.DB, { namespace, dateLabel });
     const cursorState = readDailyCursor(cursor, startIso, endIso);
-    if (cursorState.done) continue;
+    if (cursorState.done && !(await listNightlyInboxBacklog(env.DB, namespace, startIso, endIso, 1)).length) continue;
 
     const rawCount = await countRawMessagesForDateLabel(env.DB, { namespace, dateLabel, timeZone });
     if (rawCount === 0) continue;
@@ -133,17 +134,8 @@ async function performDailyMemoryDigest(
   const legacyCursorName = `daily_digest:${namespace}:${dateLabel}`;
   const cursor = (await readCursor(env.DB, cursorName)) ?? (await readCursor(env.DB, legacyCursorName));
   const cursorState = options.force ? { done: false, after: null, afterId: null } : readDailyCursor(cursor, startIso, endIso);
-  if (cursorState.done) {
-    await safeFinishDreamRun(env.DB, {
-      id: dreamRunId,
-      status: "skipped",
-      reason: "already_done"
-    });
-    return { ran: false, mode: "dream", date: dateLabel, reason: "already_done", startIso, endIso, cursor };
-  }
-
   const maxMessages = readDreamMaxMessages(env);
-  const fetchedMessages = await listMessagesByNamespaceInRange(env.DB, {
+  const chronologicalBatch = cursorState.done ? [] : await listMessagesByNamespaceInRange(env.DB, {
     namespace,
     startCreatedAt: startIso,
     endCreatedAt: endIso,
@@ -151,18 +143,48 @@ async function performDailyMemoryDigest(
     afterId: cursorState.afterId,
     limit: maxMessages
   });
+  // A post-migration message can arrive behind an already advanced date cursor.
+  const lateBatch = chronologicalBatch.length === 0;
+  const fetchedMessages = lateBatch
+    ? await listNightlyInboxBacklog(env.DB, namespace, startIso, endIso, maxMessages)
+    : chronologicalBatch;
   if (fetchedMessages.length === 0) {
-    if (!dryRun) {
+    if (!dryRun && !cursorState.done) {
       await writeCursor(env.DB, cursorName, `done:${cursorState.after ?? startIso}`);
     }
     await safeFinishDreamRun(env.DB, {
       id: dreamRunId,
       status: "skipped",
-      reason: "no_messages"
+      reason: cursorState.done ? "already_done" : "no_messages"
     });
-    return { ran: false, mode: "dream", date: dateLabel, reason: "no_messages", startIso, endIso, cursor };
+    return { ran: false, mode: "dream", date: dateLabel, reason: cursorState.done ? "already_done" : "no_messages", startIso, endIso, cursor };
   }
+  const claim = dryRun ? null : await claimNightlyExtraction(env, namespace, fetchedMessages, run, options.force === true);
+  if (claim?.blocked) {
+    await safeFinishDreamRun(env.DB, { id: dreamRunId, status: "skipped", reason: "inbox_claimed" });
+    return { ran: false, mode: "dream", date: dateLabel, reason: "inbox_claimed", startIso, endIso, cursor };
+  }
+  try {
+    return await processDailyDigestBatch(env, namespace, run, {
+      dryRun, startIso, endIso, cursor, cursorName, fetchedMessages, maxMessages, claim, lateBatch
+    });
+  } finally {
+    await releaseNightlyExtraction(env.DB, namespace, claim);
+  }
+}
 
+async function processDailyDigestBatch(
+  env: Env,
+  namespace: string,
+  run: { dreamRunId: string | null; dateLabel: string },
+  input: {
+    dryRun: boolean; startIso: string; endIso: string; cursor: string | null; cursorName: string;
+    fetchedMessages: MessageRecord[]; maxMessages: number; lateBatch: boolean;
+    claim: Awaited<ReturnType<typeof claimNightlyExtraction>> | null;
+  }
+): Promise<DailyDigestRunResult> {
+  const { dreamRunId, dateLabel } = run;
+  const { dryRun, startIso, endIso, cursor, cursorName, fetchedMessages, maxMessages, claim, lateBatch } = input;
   const memoryContextLimit = readDreamMemoryContextLimit(env);
   const strategy = readDreamStrategy(env);
   const v2Enabled = isV2Enabled(env);
@@ -195,7 +217,8 @@ async function performDailyMemoryDigest(
     endIso,
     messages: fetchedMessages,
     existingMemories,
-    hasMore: fetchedHasMore
+    hasMore: fetchedHasMore,
+    extractMessageIds: claim?.messageIds
   });
   const { messages, hasMore, modelResult, extractedMemories } = extractPhase;
   const digest = modelResult.digest;
@@ -326,7 +349,8 @@ async function performDailyMemoryDigest(
   }
 
   // --- lifecycle phase (supersede / archive / upsert / candidates + daily log) ---
-  const v2Result = await runLifecyclePhase(env, {
+  const extractedAny = !claim || messageIds.some(id => claim.messageIds.has(id));
+  const v2Result = extractedAny ? await runLifecyclePhase(env, {
     namespace,
     strategy,
     dateLabel,
@@ -334,8 +358,12 @@ async function performDailyMemoryDigest(
     digest,
     messageIds,
     extracted: extractedMemories,
-    contextMemoryIds: existingMemories.filter(m => m.namespace === namespace).map(m => m.id)
-  });
+    contextMemoryIds: existingMemories.filter(m => m.namespace === namespace).map(m => m.id),
+    requireCommit: claim?.held,
+    writeDailyDraft: !lateBatch
+  }) : { added: 0, updated: 0, deleted: 0, queuedCandidates: 0, errors: [] };
+  await markNightlyExtracted(env.DB, namespace, claim, messageIds);
+  const pending = hasMore || (await listNightlyInboxBacklog(env.DB, namespace, startIso, endIso, 1)).length > 0;
 
   // --- LMC-5 phases (after existing tidy; each isolated so failures don't scrap the night) ---
   let relationBuild: RelationBuildStats | undefined;
@@ -427,11 +455,15 @@ async function performDailyMemoryDigest(
     });
   }
 
-  await writeCursor(env.DB, cursorName, formatDreamCursor({
-    done: !hasMore,
-    createdAt: lastMessage.created_at,
-    id: lastMessage.id
-  }));
+  if (lateBatch) {
+    if (!pending && !cursor?.startsWith("done:")) await writeCursor(env.DB, cursorName, `done:${cursor ?? startIso}`);
+  } else {
+    await writeCursor(env.DB, cursorName, formatDreamCursor({
+      done: !pending,
+      createdAt: lastMessage.created_at,
+      id: lastMessage.id
+    }));
+  }
 
   // LMC-5 phase report is additive audit data — never stuff into dream_runs.error
   // (legacy shape is JSON array of apply errors, or null). Persist via memory_events.
@@ -499,7 +531,7 @@ async function performDailyMemoryDigest(
       queuedCandidates: v2Result.queuedCandidates,
       cleanedEmptyMemories,
       cursorAdvanced: true,
-      hasMore,
+      hasMore: pending,
       errors: v2Result.errors,
       relation_build: relationBuild,
       z_audit: zAudit,

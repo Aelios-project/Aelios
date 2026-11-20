@@ -67,7 +67,7 @@ function pct(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
-function readNoul(answers: unknown, id: string): number | null {
+export function readNoul(answers: unknown, id: string): number | null {
   if (!answers || typeof answers !== "object") return null;
   const answer = (answers as Record<string, unknown>)[id];
   if (!answer || typeof answer !== "object") return null;
@@ -131,10 +131,18 @@ export function buildClefInput(
 }
 
 /** 一条候选一次调用。Worker 的 AI 绑定直接回 {answers}；REST 外壳 {result:{answers}} 也认。 */
-async function runClef(env: Env, input: ReturnType<typeof buildClefInput>): Promise<unknown> {
+export async function runClef(
+  env: Env,
+  input: {
+    model: string;
+    state: unknown;
+    questions: Record<string, Noul>;
+  },
+  model = CLEF_MODEL,
+): Promise<unknown> {
   if (!env.AI) throw new Error("clef needs the Workers AI binding");
   type RunArgs = Parameters<Ai["run"]>;
-  const raw = (await env.AI.run(CLEF_MODEL as RunArgs[0], input as unknown as RunArgs[1])) as unknown;
+  const raw = (await env.AI.run(model as RunArgs[0], input as unknown as RunArgs[1])) as unknown;
   const body = raw && typeof raw === "object" && "result" in raw ? (raw as { result: unknown }).result : raw;
   return body && typeof body === "object" ? (body as { answers?: unknown }).answers : undefined;
 }

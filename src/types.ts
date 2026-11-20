@@ -55,6 +55,12 @@ export interface Env {
   ENABLE_DAILY_MEMORY_DIGEST?: string;
   DREAM_NAMESPACE?: string;
   CURRENT_STATE_PROJECTION?: string;
+  ROLLING_DREAM?: string;
+  ROLLING_WINDOW_MESSAGES?: string;
+  ROLLING_WINDOW_CHARS?: string;
+  ROLLING_STATE_CHARS?: string;
+  ROLLING_CLAIM_TTL_MINUTES?: string;
+  ROLLING_MAX_ATTEMPTS?: string;
   DREAM_MAX_MESSAGES?: string;
   DREAM_MAX_RUNS?: string;
   DREAM_MAX_TOKENS?: string;
@@ -127,7 +133,16 @@ export interface DreamRunQueueMessage {
   force: boolean;
 }
 
-export type QueueMessage = RetentionQueueMessage | DreamRunQueueMessage | import("./gateway/record").GatewayExchange;
+export interface RollingWindowQueueMessage {
+  type: "rolling_window";
+  namespace: string;
+}
+
+export type QueueMessage =
+  | RetentionQueueMessage
+  | DreamRunQueueMessage
+  | RollingWindowQueueMessage
+  | import("./gateway/record").GatewayExchange;
 
 export type Scope =
   | "chat:proxy"

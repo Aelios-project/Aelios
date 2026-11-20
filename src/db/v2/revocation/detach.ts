@@ -9,6 +9,8 @@ export function rawRowStatements(db: D1Database, namespace: string, id: string):
     db.prepare("DELETE FROM messages WHERE namespace=? AND id=?").bind(namespace, id),
     db.prepare("DELETE FROM chat_archive WHERE namespace=? AND id=?").bind(namespace, id),
     db.prepare("DELETE FROM message_fts WHERE namespace=? AND message_id=?").bind(namespace, id),
+    db.prepare(`DELETE FROM memory_events WHERE namespace=? AND event_type='rolling_shadow'
+      AND ? IN (SELECT value FROM json_each(payload_json,'$.message_ids'))`).bind(namespace, id),
   ];
 }
 

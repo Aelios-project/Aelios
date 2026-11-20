@@ -1,6 +1,5 @@
 import { strict as assert } from "node:assert";
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { test, type TestContext } from "node:test";
 import { invalidateSettingsCache } from "../src/gateway/config";
 import { runDailyMemoryDigest } from "../src/memory/dream/orchestrator";
@@ -12,6 +11,7 @@ import { draftTriggersForMemory } from "../src/memory/triggers/build";
 import { callOpenAICompat } from "../src/proxy/openaiAdapter";
 import { callModelWithRetry } from "../src/utils/modelCall";
 import type { MessageRecord } from "../src/types";
+import { sqliteFixture } from "./support/sqlite";
 
 const DATE = "2026-09-18";
 const MODEL = "workers-ai/@cf/openai/gpt-oss-120b";
@@ -19,26 +19,7 @@ const DIGEST = { title: "一日整理", summary: "整理这一批合成对话。
 const REQUEST = { model: MODEL, messages: [{ role: "user" as const, content: "synthetic" }] };
 
 function fixture(t: TestContext, respond: (input: any, options?: any) => unknown | Promise<unknown>) {
-  const sqlite = new DatabaseSync(":memory:");
-  t.after(() => sqlite.close());
-  for (const file of readdirSync("migrations").filter(f => f.endsWith(".sql")).sort()) {
-    try { sqlite.exec(readFileSync(`migrations/${file}`, "utf8")); }
-    catch (error) { if (!String(error).includes("fts5")) throw error; }
-  }
-  const db: any = {
-    prepare(sql: string) {
-      const statement = sqlite.prepare(sql);
-      let values: any[] = [];
-      const query = {
-        bind(...args: any[]) { values = args; return query; },
-        async first() { return statement.get(...values) ?? null; },
-        async all() { return { results: statement.all(...values) }; },
-        async run() { return { meta: { changes: statement.run(...values).changes } }; }
-      };
-      return query;
-    },
-    async batch(queries: any[]) { return Promise.all(queries.map(query => query.run())); }
-  };
+  const { sqlite, db } = sqliteFixture(t);
   const env: any = { DB: db, DREAM_MODEL: MODEL, DREAM_TIME_ZONE: "UTC", DREAM_MAX_MESSAGES: "40",
     DREAM_STRATEGY: "review", AI: { run(_model: string, input: any, options?: any) { return respond(input, options); } } };
   invalidateSettingsCache();

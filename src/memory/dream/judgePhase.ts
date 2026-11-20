@@ -79,7 +79,7 @@ export async function recordDreamReviewProposal(
 
 export async function queueDreamExtractedMemories(
   env: Env,
-  input: { namespace: string; memories: ExtractedMemory[]; messageIds: string[]; digestDecisions?: ExtractedMemory[]; contextIds?: string[] }
+  input: { namespace: string; memories: ExtractedMemory[]; messageIds: string[]; digestDecisions?: ExtractedMemory[]; contextIds?: string[]; requireCommit?: boolean }
 ): Promise<number> {
   let queued = 0;
   const project = isCurrentStateEnabled(env);
@@ -118,6 +118,7 @@ export async function queueDreamExtractedMemories(
       });
       queued += 1;
     } catch (error) {
+      if (input.requireCommit && !String(error).includes("revoked memory input")) throw error;
       console.warn("dream: failed to queue extracted memory", {
         namespace: input.namespace,
         error: error instanceof Error ? error.message : String(error)
