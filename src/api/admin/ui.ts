@@ -79,7 +79,7 @@ const SETTING_ROW = String.raw`<div class="set-row" :title="item.name">
                 <template x-if="item.kind === 'select'">
                   <select :id="'setting-' + item.name" @change="saveSetting(item, $event.target.value)" :disabled="item.busy" class="field set-input">
                     <template x-for="option in item.options" :key="option.value">
-                      <option :value="option.value" :disabled="option.disabled" :selected="option.value === settingOption(item)" x-text="L(option.label, option.labelEn)"></option>
+                      <option :value="option.value" :selected="option.value === settingOption(item)" x-text="L(option.label, option.labelEn)"></option>
                     </template>
                   </select>
                 </template>

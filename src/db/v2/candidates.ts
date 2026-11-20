@@ -40,7 +40,8 @@ export interface CreateMemoryCandidateInput {
 
 export async function createMemoryCandidate(
   db: D1Database,
-  input: CreateMemoryCandidateInput
+  input: CreateMemoryCandidateInput,
+  guard?: D1PreparedStatement
 ): Promise<MemoryCandidateRow> {
   // 幂等闸：同一 namespace 下已有等价的 pending 候选就直接复用，不再入队。
   // dream 每晚重跑会对同一目标反复提删除/更新提案，没有这道闸队列会被灌满重复项。
@@ -91,7 +92,7 @@ export async function createMemoryCandidate(
     updated_at: now
   };
 
-  await db
+  const insert = db
     .prepare(
       `INSERT INTO memory_candidates (
         id, namespace, type, content, fact_key, confidence, importance, tags,
@@ -115,8 +116,9 @@ export async function createMemoryCandidate(
       record.decision_note,
       record.created_at,
       record.updated_at, record.provenance ?? null
-    )
-    .run();
+    );
+  if (guard) await db.batch([guard, insert]);
+  else await insert.run();
 
   return record;
 }

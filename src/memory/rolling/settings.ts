@@ -25,7 +25,8 @@ export function rollingMode(env: Env): RollingMode {
 }
 
 export function activeRollingLane(env: Env): RollingLane | null {
-  return rollingMode(env) === "shadow" ? "shadow" : null;
+  const mode = rollingMode(env);
+  return mode === "off" ? null : mode;
 }
 
 export function rollingSettings(env: Env): RollingSettings {

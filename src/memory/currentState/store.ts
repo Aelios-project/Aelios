@@ -33,9 +33,11 @@ export async function recordLateDecisionEvidence(
     validAsOf: string;
     sourceMessageIds: string[];
     provenance: MemoryProvenance;
-  }
+  },
+  guard?: D1PreparedStatement
 ): Promise<void> {
-  const [saved] = await env.DB.batch([
+  const result = await env.DB.batch([
+    ...(guard ? [guard] : []),
     env.DB.prepare(
       `INSERT INTO memory_revisions
         (id, memory_id, namespace, type, content, source, source_message_ids, fact_key, written_at, reason, created_at, provenance)
@@ -73,7 +75,7 @@ export async function recordLateDecisionEvidence(
        )`
     ).bind(input.namespace, input.targetId, input.namespace, input.targetId, MAX_REVISIONS_PER_MEMORY)
   ]);
-  if (!saved.meta.changes) {
+  if (!result.at(-2)?.meta.changes) {
     throw new Error("Decision evidence or target changed; retry");
   }
 }
@@ -91,7 +93,8 @@ export async function commitScopedDecision(
     confidence: number;
     importance: number;
     previous?: { id: string; updatedAt: string; vectorId: string | null } | null;
-  }
+  },
+  guard?: D1PreparedStatement
 ): Promise<void> {
   const db = env.DB;
   const now = nowIso();
@@ -161,7 +164,7 @@ export async function commitScopedDecision(
         ).bind(input.id, input.namespace, input.factKey, input.validAsOf, now, input.namespace, input.id)
       ];
 
-  const committed = await db.batch(statements);
+  const committed = await db.batch(guard ? [guard, ...statements] : statements);
   if (!committed.at(-2)?.meta.changes) {
     throw new Error("Decision changed; retry");
   }
