@@ -10,6 +10,9 @@ export interface ExtractedMemory {
   confidence: number;
   tags: string[];
   source_message_ids: string[];
+  context_dates?: string[];
+  attributed_role?: "user" | "assistant";
+  evidence_quote?: string;
   fact_key?: string;  // v2: model can provide fact_key for upsert dedup
 }
 

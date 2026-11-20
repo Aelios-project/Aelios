@@ -1,3 +1,4 @@
+import type { MemoryProvenance } from "../memory/provenance";
 import type { MemoryLifecycleRow, MemoryRecord } from "../types";
 import { deleteFtsRow, searchFtsIds, upsertMemoryFts } from "../memory/fts";
 import { lexicalHitScore } from "../memory/queryShape";
@@ -6,6 +7,7 @@ import { newId } from "../utils/ids";
 import { nowIso } from "../utils/time";
 
 export interface CreateMemoryInput {
+  provenance?: MemoryProvenance;
   namespace: string;
   type: string;
   content: string;
@@ -37,6 +39,7 @@ export interface ListMemoryPage {
 }
 
 export interface UpdateMemoryInput {
+  provenance?: MemoryProvenance;
   type?: string;
   content?: string;
   summary?: string | null;
@@ -65,6 +68,7 @@ export async function createMemory(db: D1Database, input: CreateMemoryInput): Pr
     pinned: input.pinned ? 1 : 0,
     tags: JSON.stringify(input.tags ?? []),
     source: input.source ?? null,
+    provenance: JSON.stringify(input.provenance) ?? null,
     source_message_ids: JSON.stringify(input.sourceMessageIds ?? []),
     vector_id: vectorId,
     last_recalled_at: null,
@@ -78,8 +82,8 @@ export async function createMemory(db: D1Database, input: CreateMemoryInput): Pr
     .prepare(
       `INSERT INTO memories (
         id, namespace, type, content, summary, importance, confidence, status,
-        pinned, tags, source, source_message_ids, vector_id, created_at, updated_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        pinned, tags, source, source_message_ids, vector_id, created_at, updated_at, expires_at, provenance
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       record.id,
@@ -97,7 +101,7 @@ export async function createMemory(db: D1Database, input: CreateMemoryInput): Pr
       record.vector_id,
       record.created_at,
       record.updated_at,
-      record.expires_at
+      record.expires_at, record.provenance ?? null
     )
     .run();
 
@@ -281,15 +285,13 @@ export async function updateMemory(
     revision?: { by?: string | null; reason?: string | null };
   }
 ): Promise<MemoryRecord | null> {
-  if (input.patch.content !== undefined) {
-    await saveMemoryRevision(db, {
+  const contentChanged = input.patch.content !== undefined && await saveMemoryRevision(db, {
       namespace: input.namespace,
       memoryId: input.id,
       nextContent: input.patch.content,
       replacedBy: input.revision?.by ?? null,
       reason: input.revision?.reason ?? "edit"
     });
-  }
   const assignments: string[] = [];
   const binds: unknown[] = [];
 
@@ -299,14 +301,17 @@ export async function updateMemory(
   }
 
   if (input.patch.type !== undefined) set("type", input.patch.type);
-  if (input.patch.content !== undefined) set("content", input.patch.content);
+  if (input.patch.content !== undefined) {
+    set("content", input.patch.content);
+    if (contentChanged) set("provenance", JSON.stringify(input.patch.provenance) ?? null);
+  }
   if (input.patch.summary !== undefined) set("summary", input.patch.summary);
   if (input.patch.importance !== undefined) set("importance", input.patch.importance);
   if (input.patch.confidence !== undefined) set("confidence", input.patch.confidence);
   if (input.patch.status !== undefined) set("status", input.patch.status);
   if (input.patch.pinned !== undefined) set("pinned", input.patch.pinned ? 1 : 0);
   if (input.patch.tags !== undefined) set("tags", JSON.stringify(input.patch.tags));
-  if (input.patch.sourceMessageIds !== undefined) set("source_message_ids", JSON.stringify(input.patch.sourceMessageIds));
+  if (input.patch.sourceMessageIds !== undefined || contentChanged) set("source_message_ids", JSON.stringify(input.patch.sourceMessageIds ?? []));
   if (input.patch.expiresAt !== undefined) set("expires_at", input.patch.expiresAt);
 
   if (assignments.length === 0) {

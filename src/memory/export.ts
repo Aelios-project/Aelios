@@ -1,3 +1,4 @@
+import { revokedMemoryIds } from "../db/v2/revocation";
 import { listMemoriesPage } from "../db/memories";
 import { fetchMemoryLifecycleRows } from "../db/v2";
 import type { Env, MemoryApiRecord, MemoryRecord } from "../types";
@@ -194,7 +195,8 @@ async function exportFromVectorize(
       phase2Fetched += vectors.length;
       for (const v of vectors) {
         // getByIds returns VectorizeMatch-shaped objects with metadata
-        records.push(vectorMatchToExportRecord(v as unknown as VectorizeMatch));
+        const record = vectorMatchToExportRecord(v as unknown as VectorizeMatch);
+        if (record.metadata.namespace === input.namespace) records.push(record);
       }
     } catch (err) {
       // Partial result — return what we have plus the error
@@ -269,7 +271,8 @@ export async function exportMemories(env: Env, input: MemoryExportInput): Promis
   let source: "vectorize" | "d1";
 
   if (vectorize.records.length > 0 || !vectorize.error) {
-    data = vectorize.records;
+    const revoked = await revokedMemoryIds(env.DB, input.namespace, vectorize.records.map(r => r.id));
+    data = vectorize.records.filter(r => !revoked.has(r.id));
     source = "vectorize";
   } else {
     data = await exportFromD1(env, { namespace: input.namespace, type: input.type });

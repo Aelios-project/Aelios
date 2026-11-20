@@ -271,7 +271,7 @@ test("a failed clef call leaves the candidate for tomorrow", async () => {
   assert.equal(row("memory_candidates", "c-x").status, "pending");
 });
 
-test("review and the judge can now rewrite a hand-authored memory, keeping its signature", async () => {
+test("manual review preserves the signature and revisions; automated conflicts stay pending", async () => {
   memory("hand", "咲咲叫我老公。", "boundary:naming");
   sqlite.prepare("UPDATE memories SET authored_by = '旦九', response_tendency = '接住' WHERE id = 'hand'").run();
   message("m1", "user", "场内叫先生，平时叫老公。");
@@ -284,13 +284,12 @@ test("review and the judge can now rewrite a hand-authored memory, keeping its s
   assert.equal(rewritten.content, "咲咲平时叫我老公，场内叫先生。");
   assert.deepEqual([rewritten.authored_by, rewritten.response_tendency], ["旦九", "接住"]);
 
-  // The nightly judge supersedes it; the new version carries the signature on.
+  // Even a high model score cannot silently supersede it.
   candidate("c-judge", "咲咲场内叫我先生，平时叫老公。", { source: "dream_update", fact_key: "boundary:naming" });
   clefAnswers.push({ grounded: 0.9, worth: 0.7 });
-  assert.equal((await runCandidateJudge(env, "default")).approved, 1);
-  assert.equal(row("memories", "hand").status, "superseded");
-  const next = row("memories", row("memory_candidates", "c-judge").target_memory_id);
-  assert.deepEqual([next.content, next.authored_by, next.response_tendency, next.source], ["咲咲场内叫我先生，平时叫老公。", "旦九", "接住", "judge"]);
+  assert.equal((await runCandidateJudge(env, "default")).kept, 1);
+  assert.equal(row("memories", "hand").status, "active");
+  assert.equal(row("memory_candidates", "c-judge").status, "pending");
 });
 
 test("switched off, clef leaves every candidate waiting; old judge settings are dropped quietly", async () => {
@@ -373,4 +372,46 @@ test("automatic approval supersedes an explicit target even without a fact key",
   assert.equal(row("memories", approved.target_memory_id).content, "咲咲搬进了自己装修的旧房子。");
   const current = sqlite.prepare("SELECT COUNT(*) AS n FROM memories WHERE namespace = 'default' AND status = 'active' AND version_status = 'current'").get() as any;
   assert.equal(current.n, 1);
+});
+
+test("a replayed Dream extraction does not re-enqueue an approved utterance, or sign it for the speaker", async () => {
+  const { queueDreamExtractedMemories } = await import("../src/memory/dream/judgePhase");
+  message("m1", "assistant", "I chose the small adapter.");
+  message("m2", "user", "Why?");
+  const batch = {
+    namespace: "default",
+    messageIds: ["m1", "m2"],
+    memories: [
+      {
+        type: "decision",
+        content: "The assistant chose the small adapter.",
+        importance: 0.7,
+        confidence: 0.8,
+        tags: [],
+        fact_key: "adapter",
+        source_message_ids: ["m1"],
+        attributed_role: "assistant" as const
+      }
+    ]
+  };
+  await Promise.all([queueDreamExtractedMemories(env, batch), queueDreamExtractedMemories(env, batch)]);
+  clefAnswers.push(yes());
+  assert.equal((await runCandidateJudge(env, "default")).approved, 1);
+  await queueDreamExtractedMemories(env, batch);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM memory_candidates").get()?.n, 1);
+  const record = sqlite.prepare("SELECT * FROM memories WHERE fact_key='adapter'").get();
+  assert.ok(record);
+  const origin = JSON.parse(String(record.provenance));
+  assert.deepEqual(
+    [
+      origin.creation_mode,
+      origin.attributed_actor,
+      origin.recording_actor,
+      origin.completeness,
+      record.authored_by
+    ],
+    ["dream_derived", "assistant", "judge", "partial", null]
+  );
+  assert.deepEqual(JSON.parse(String(record.source_message_ids)), ["m1"]);
+  assert.deepEqual(origin.inputs, ["message:m1", "message:m2"]);
 });

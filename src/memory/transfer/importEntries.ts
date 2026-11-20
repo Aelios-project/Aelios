@@ -8,6 +8,7 @@
 //
 // 导入的记忆 created_at 用原来的日期，updated_at 是现在：过期按 updated_at 算，不能一导进来就过期。
 
+import { importOrigin } from "../provenance";
 import { createImportCandidate, createPrecious, upsertMemoryByFactKey } from "../../db/v2";
 import type { Env } from "../../types";
 import { sha256Hex } from "../../utils/hash";
@@ -246,6 +247,7 @@ export async function importMemoryEntries(
         confidence: entry.confidence ?? 0.8,
         tags: entry.tags,
         source: ENTRY_IMPORT_SOURCE,
+        provenance: importOrigin,
         sourceMessageIds: [],
         createdAt,
         pinned: entry.pinned

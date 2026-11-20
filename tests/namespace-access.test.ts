@@ -29,6 +29,8 @@ beforeEach(() => {
       async all() { return { results: statement.all(...args) }; },
       async run() { const r = statement.run(...args); return { meta: { changes: r.changes } }; }
     }; return api;
+  }, async batch(queries: {run(): Promise<unknown>}[]) {
+    return Promise.all(queries.map(q => q.run()));
   } };
   deletedVectors = [];
   env = {

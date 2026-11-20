@@ -3,6 +3,7 @@ import type { Env } from "../../types";
 import { newId } from "../../utils/ids";
 import { nowIso } from "../../utils/time";
 import { findSimilarActiveMemory } from "../dedupGate";
+import { dreamOrigin } from "../provenance";
 import type { ExtractedMemory } from "../extract";
 import {
   type DailyDigestResult,
@@ -83,6 +84,7 @@ export async function queueDreamExtractedMemories(
         namespace: input.namespace,
         content: memory.content
       });
+      if (hit?.memory.content === memory.content && hit.memory.source_message_ids.some(id => memory.source_message_ids.includes(id))) continue;
       if (hit) {
         targetMemoryId = hit.memory.id;
         decisionNote = `dedup_gate: similar to ${hit.memory.id} (score=${hit.score.toFixed(2)})`;
@@ -95,7 +97,9 @@ export async function queueDreamExtractedMemories(
         confidence: memory.confidence,
         importance: memory.importance,
         tags: memory.tags,
-        sourceMessageIds: memory.source_message_ids.length ? memory.source_message_ids : input.messageIds,
+        sourceMessageIds: memory.source_message_ids,
+        provenance: { ...dreamOrigin(input.messageIds, [], memory.context_dates), attributed_actor: memory.attributed_role ?? "unknown",
+          evidence_relation: memory.attributed_role ? "paraphrase" : "interpretation" },
         source: "dream_extract",
         targetMemoryId,
         decisionNote

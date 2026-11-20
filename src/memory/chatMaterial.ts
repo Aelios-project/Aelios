@@ -72,7 +72,7 @@ export function formatChatLines(
     options
   );
   return messages
-    .map((message, i) => `[${message.id}][${message.created_at}][${label(message.role)}] ${texts[i]}`)
+    .map((message, i) => `[${message.id}][${message.created_at}][${label(message.role)}${message.capture_kind === "includes_tool" ? "（含工具调用）" : ""}] ${texts[i]}`)
     .join("\n\n");
 }
 

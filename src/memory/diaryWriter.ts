@@ -135,7 +135,7 @@ export function normalizeDiarySegmentResult(value: unknown): DiarySegmentModelRe
 
 const DIARY_HEADER = "你是 Aelios，正在以第一人称写给自己的私人日记。这是印象，不是已核实的事实档案。";
 const JSON_ONLY_RULE = "只输出 JSON，不要 markdown，不要解释，不要输出思考过程。";
-const HEDGE_RULE = "- 拿不准就写得更宽泛，或者不写。宁可少记，不要写实幻觉。";
+const HEDGE_RULE = "- 拿不准就省略。写清谁表达了什么，别代写没人说过的内心独白，别把工具参数当成可见发言。";
 const DIARY_SUMMARY_RULE = "- summary 是一段 200-400 字的自然中文，允许口语，禁止列表、标题、emoji 堆砌。";
 const DIARY_TITLE_RULE = "- title 是 12 字以内的日记标题，像给自己起的题目。";
 const NO_INTERNALS_RULE = "- 禁止提及 D1、Vectorize、RAG、数据库、记忆系统、prompt、代理层等实现细节。";
@@ -308,7 +308,7 @@ async function listMessagesTailInRange(
 ): Promise<MessageRecord[]> {
   const result = await db
     .prepare(
-      `SELECT id, conversation_id, namespace, role, content, source, created_at, seq
+      `SELECT id, conversation_id, namespace, role, content, source, created_at, seq, capture_kind
        FROM messages
        WHERE namespace = ?
          AND role IN ('user', 'assistant')
@@ -563,7 +563,7 @@ export async function runDiaryWriter(
     return { enabled: true, date: dateLabel, ran: false, reason: "no_messages", message_count: 0 };
   }
 
-  const existing = await getDailyLog(env.DB, { namespace, date: dateLabel });
+  const existing = await getDailyLog(env.DB, { namespace, date: dateLabel, includeInputs: true });
   const existingDraft = existing ? { title: existing.title, summary: existing.summary } : null;
   const speakers = await loadSpeakersForNamespace(env, namespace);
   const segments = splitDiarySegments(messages, readDiarySegmentSize(env));
@@ -612,7 +612,9 @@ export async function runDiaryWriter(
     date: dateLabel,
     title: outcome.result.title,
     summary: outcome.result.summary,
-    sourceMessageIds
+    sourceMessageIds,
+    inputRefs: [...new Set([...knownIds.map(id => `message:${id}`), ...(existing?.input_refs ?? []),
+      ...(existing ? [`day:${dateLabel}@${existing.updated_at}`, ...existing.source_message_ids.map(id => `message:${id}`)] : [])])]
   });
 
   return {

@@ -160,6 +160,11 @@ export async function saveAssistantMessage(
   return id;
 }
 
+/** Resolve caller-supplied citations in the authorized space, within the D1 parameter limit. */
+export async function retainedMessageIds(db: D1Database, namespace: string, requested: string[]): Promise<string[]> {
+  return (await getMessagesByIds(db, {namespace, ids: [...new Set(requested)].slice(0, 90)})).map(m => m.id);
+}
+
 export async function getMessagesByIds(
   db: D1Database,
   input: { namespace: string; ids: string[] }
@@ -169,7 +174,7 @@ export async function getMessagesByIds(
   const placeholders = input.ids.map(() => "?").join(", ");
   const result = await db
     .prepare(
-      `SELECT id, conversation_id, namespace, role, content, source, created_at, seq
+      `SELECT id, conversation_id, namespace, role, content, source, created_at, seq, capture_kind
        FROM messages
        WHERE namespace = ? AND id IN (${placeholders})
        ORDER BY ${MESSAGE_ORDER_SQL}`
@@ -218,7 +223,7 @@ export async function listMessagesByNamespace(
   afterCreatedAt: string | null,
   limit: number
 ): Promise<MessageRecord[]> {
-  let sql = `SELECT id, conversation_id, namespace, role, content, source, created_at, seq
+  let sql = `SELECT id, conversation_id, namespace, role, content, source, created_at, seq, capture_kind
              FROM messages
              WHERE namespace = ? AND role IN ('user', 'assistant')`;
   const binds: unknown[] = [namespace];
@@ -266,7 +271,7 @@ export async function listMessagesByNamespaceInRange(
     limit: number;
   }
 ): Promise<MessageRecord[]> {
-  let sql = `SELECT id, conversation_id, namespace, role, content, source, created_at, seq
+  let sql = `SELECT id, conversation_id, namespace, role, content, source, created_at, seq, capture_kind
              FROM messages
              WHERE namespace = ?
                AND role IN ('user', 'assistant')
@@ -283,19 +288,6 @@ export async function listMessagesByNamespaceInRange(
 
 // log_conversation 去重：同一对话里已经存过的 (role, 正文) 不再存第二遍，同一批里重复的也只留一条。
 // 正文按 saveIngestMessages 落库时的同一套清洗比较，空白差异不算不同。
-/**
- * 删一句原话（后台首页「今天的对话」的删除键）：报错、乱码、突然拒答这种不想留的。
- * 全文索引一起删，夜里整理、写日记和召回原话都不会再读到它。
- */
-export async function deleteMessage(db: D1Database, input: { namespace: string; id: string }): Promise<boolean> {
-  const [deleted, , archived] = await db.batch([
-    db.prepare("DELETE FROM messages WHERE namespace = ? AND id = ?").bind(input.namespace, input.id),
-    db.prepare("DELETE FROM message_fts WHERE namespace = ? AND message_id = ?").bind(input.namespace, input.id),
-    db.prepare("DELETE FROM chat_archive WHERE namespace = ? AND id = ?").bind(input.namespace, input.id)
-  ]);
-  return Boolean(deleted?.meta?.changes || archived?.meta?.changes);
-}
-
 export async function filterUnsavedMessages(
   db: D1Database,
   input: { namespace: string; conversationId: string; messages: OpenAIChatMessage[] }

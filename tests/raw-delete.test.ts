@@ -97,3 +97,119 @@ test("the home page's chats have a delete button that asks first, then drops the
   assert.deepEqual(app.todayMessages.map((message: any) => message.id), ["gw_user_1"]);
   assert.equal(app.stats.today_raw_count, 1);
 });
+
+test("revocation hides transitive Dream inputs before a vector failure; retry and backfill cannot revive them", async () => {
+  const { runVectorBackfill } = await import("../src/memory/vectorBackfill");
+  const { runRecall } = await import("../src/memory/v2/recall");
+  const { dreamOrigin } = await import("../src/memory/provenance");
+  const id = "gw_user_1";
+  const origin = JSON.stringify(dreamOrigin([id]));
+  const insert =
+    sqlite.prepare(`INSERT INTO memories (id,namespace,type,content,vector_id,created_at,updated_at,source_message_ids,provenance)
+    VALUES (?,?, 'note','test adapter',?, '2026-01-01','2026-01-01',?,?)`);
+  insert.run("parent", "default", "vec_parent", JSON.stringify([id]), origin);
+  insert.run("child", "default", "vec_child", "[]", JSON.stringify(dreamOrigin([], ["parent"])));
+  insert.run(
+    "independent",
+    "default",
+    "vec_authored",
+    JSON.stringify([id]),
+    JSON.stringify({ creation_mode: "agent_explicit" })
+  );
+  insert.run("other", "other", "vec_other", JSON.stringify([id]), origin);
+  sqlite
+    .prepare(
+      "INSERT INTO memory_candidates (id,namespace,content,provenance,created_at,updated_at) VALUES ('pending','default','test',?,'2026','2026')"
+    )
+    .run(origin);
+  sqlite
+    .prepare(
+      "INSERT INTO memory_triggers(namespace,memory_id,concept,vector_id,created_at) VALUES ('default','child','test','trg','2026')"
+    )
+    .run();
+  sqlite
+    .prepare(
+      "INSERT INTO daily_log(namespace,date,title,summary,source_message_ids,updated_at) VALUES ('default','2026-01-01','test','test',?,'2026')"
+    )
+    .run(JSON.stringify([id]));
+  sqlite
+    .prepare(
+      "INSERT INTO longtail(id, namespace, content, ts, source_message_ids) VALUES ('lt_tail','default','test adapter','2026',?)"
+    )
+    .run(JSON.stringify([id]));
+  let fail = true;
+  const removed: string[] = [];
+  const matches = ["parent", "child"].map((ref_id) => ({
+    id: `mem_${ref_id}`,
+    score: 0.99,
+    metadata: { namespace: "default", ref_id, content: "test adapter" }
+  }));
+  env.AI = {
+    async run() {
+      return { data: [[1, 0]] };
+    }
+  };
+  env.VECTORIZE = {
+    async deleteByIds(ids: string[]) {
+      if (fail) throw new Error("offline");
+      removed.push(...ids);
+    },
+    async query() {
+      return { matches };
+    },
+    async getByIds() {
+      return [];
+    }
+  };
+  assert.equal((await del(id)).status, 503);
+  const active = () =>
+    sqlite
+      .prepare("SELECT id FROM memories WHERE status='active' ORDER BY id")
+      .all()
+      .map((r) => r.id);
+  assert.deepEqual(active(), ["independent", "other"]);
+  assert.equal(sqlite.prepare("SELECT count(*) n FROM longtail").get()?.n, 0);
+  assert.equal(sqlite.prepare("SELECT count(*) n FROM daily_log").get()?.n, 0);
+  assert.equal(sqlite.prepare("SELECT count(*) n FROM memory_candidates").get()?.n, 0);
+  assert.throws(() => insert.run("late", "default", "vec_late", "[]", origin), /revoked/);
+  const result = await runRecall(env, {
+    namespace: "default",
+    query: "test adapter",
+    include_history: true,
+    skip_inject_mark: true
+  });
+  assert.ok(result.hits.every((hit) => hit.id !== "parent" && hit.id !== "child"));
+  fail = false;
+  assert.equal((await del(id)).status, 200);
+  assert.deepEqual(
+    new Set(removed),
+    new Set(["vec_parent", "vec_child", "trg#c", "trg#b", "trg#j", "lt_tail", "lt_lt_tail"])
+  );
+  assert.equal((await del(id)).status, 404);
+  sqlite.exec(
+    "INSERT INTO weekly_log(namespace,week,start_date,end_date,title,summary,source_days,updated_at) VALUES ('default','2026-W01','2025-12-29','2026-01-04','clean','from surviving inputs',1,'2026')"
+  );
+  assert.equal((await del("gw_req_1:assistant")).status, 200);
+  assert.equal(sqlite.prepare("SELECT summary FROM weekly_log").get()?.summary, "from surviving inputs");
+  assert.equal((await runVectorBackfill(env, { namespace: "default", dryRun: true })).active_memories, 1);
+  sqlite
+    .prepare(
+      "INSERT OR IGNORE INTO messages(id,conversation_id,namespace,role,content,created_at) VALUES (?,'c','default','user','replayed','2026')"
+    )
+    .run(id);
+  assert.equal(sqlite.prepare("SELECT id FROM messages WHERE id=?").get(id), undefined);
+});
+
+test("wake_up cannot replay an impression cached before a source was forgotten", async () => {
+  const { buildBootPackage } = await import("../src/memory/v2/recall");
+  const namespace = "cache-test";
+  sqlite.exec(`INSERT INTO messages(id,conversation_id,namespace,role,content,created_at)
+    VALUES ('erase','c','cache-test','user','test','2026');
+    INSERT INTO daily_log(namespace,date,title,summary,source_message_ids,updated_at)
+    VALUES ('cache-test','2026-01-01','test','test','["erase"]','2026');
+    INSERT INTO weekly_log(namespace,week,start_date,end_date,title,summary,source_days,updated_at)
+    VALUES ('cache-test','2026-W01','2025-12-29','2026-01-04','test','weekly impression',1,'2026')`);
+  assert.equal((await buildBootPackage(env, { namespace })).impressions.weekly?.summary, "weekly impression");
+  assert.equal((await del("erase", namespace)).status, 200);
+  assert.equal((await buildBootPackage(env, { namespace })).impressions.weekly, null);
+});

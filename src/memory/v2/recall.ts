@@ -1,3 +1,5 @@
+import { listMemoryRevisions } from "../../db/v2/revisions";
+import { parseStringArray } from "../../utils/parse";
 // Aelios 记忆库 v2 召回管线 (母帖 #11 第 2/3 步)
 // boot: 冷启动包 (L1 摘要 + 昨天日志 + top pinned 珍贵)，输出稳定、确定性排序。
 // recall: 每轮动态召回 (黑话词面 → memories 向量+词面 RRF → world_fact → 长尾兜底)，闸三降权。
@@ -27,6 +29,9 @@ import { searchMemoriesWithProvenance } from "../search";
 import type { MemoryApiRecordWithProvenance } from "../search";
 import { filterAndCompressMemories } from "../filter";
 import { createEmbedding } from "../embedding";
+import { getMessagesByIds } from "../../db/messages";
+import { asksForExactWording, searchQuotes } from "../quotes";
+import type { MemoryProvenance } from "../provenance";
 import { shapeRecallQuery } from "../queryShape";
 import { expandRecallByRelations, isRelationExpansionEnabled } from "../relations";
 import { fetchTriggeredRecords, isTriggerRecallEnabled, recallByTriggers } from "../triggers";
@@ -264,10 +269,10 @@ export async function buildBootPackage(
     cache_prefix_end: true
   };
 
-  bootPackageCache.set(input.namespace, {
-    expiresAt: Date.now() + BOOT_CACHE_TTL_MS,
-    value: pkg
-  });
+  // A forget can run on another isolate. Cache only packages without revocable material.
+  if (!dailyLog && !weekly && !monthly && !spontaneous.length) {
+    bootPackageCache.set(input.namespace, { expiresAt: Date.now() + BOOT_CACHE_TTL_MS, value: pkg });
+  }
   return pkg;
 }
 
@@ -332,6 +337,9 @@ export interface RecallInput {
 }
 
 export interface RecallHit {
+  revision_of?: string;
+  provenance?: Omit<MemoryProvenance, "inputs" | "candidate_id">;
+  version_status?: string | null;
   id: string;
   content: string;
   type: string;
@@ -374,6 +382,7 @@ export interface RecallWeekBlock {
 }
 
 export interface RecallResult {
+  evidence?: { status: "available" | "partial" | "unavailable"; messages: Array<{id:string; role:string; created_at:string; text:string}> };
   hits: RecallHit[];
   glossary_hits: Array<{ term: string; definition: string }>;
   week_blocks: RecallWeekBlock[];
@@ -408,6 +417,12 @@ export async function runRecall(env: Env, input: RecallInput): Promise<RecallRes
   }
   const minScore = readRecallMinScore(env, input.min_score);
 
+  const explicit = input.grounded !== false && env.RECALL_PROVENANCE_SELECTION !== "false";
+  const evolution = explicit && /如何演变|怎么演变|决定.{0,5}经过|how did .{0,45}(?:evolve|change)/i.test(query);
+  const history = input.include_history ?? evolution;
+  const writes = explicit && /亲笔|亲自写|写了什么|what did .{1,35} write/i.test(query);
+  const userDecision = explicit && /(?:用户|我)(?:.{0,8})(?:决定|最终选)|(?:user|I) (?:finally )?(?:decide|choose)/i.test(query);
+  const exact = explicit && asksForExactWording(query);
   const shaped = shapeRecallQuery({ query, recent: input.recent });
   const glossaryQuery = shaped.thin
     ? [query, ...(input.recent ?? [])].filter(Boolean).join("\n")
@@ -429,7 +444,7 @@ export async function runRecall(env: Env, input: RecallInput): Promise<RecallRes
     lexicalTokens: shaped.lexicalTokens,
     types: input.types,
     topK: k,
-    includeHistory: input.include_history === true,
+    includeHistory: history === true,
     waitUntil: input.waitUntil,
     grounded: input.grounded !== false,
     skipRecallMark: input.skip_inject_mark === true || input.grounded === false
@@ -455,7 +470,7 @@ export async function runRecall(env: Env, input: RecallInput): Promise<RecallRes
           namespace: input.namespace,
           outcome,
           existingIds: new Set(rawMemories.map((m) => m.id)),
-          includeHistory: input.include_history === true
+          includeHistory: history === true
         });
         extra.forEach((memory, index) => {
           rawMemories.splice(Math.min(rawMemories.length, index * 2 + 1), 0, memory);
@@ -493,11 +508,18 @@ export async function runRecall(env: Env, input: RecallInput): Promise<RecallRes
     if (factTime) timeByMemoryId.set(m.id, factTime);
     const rawScore = m.score ?? 0;
     const authored = m.authored_by ?? null;
+    const origin = m.provenance;
+    const namedWrite = writes && origin?.creation_mode === "agent_explicit" && origin.claimed_author && query.toLowerCase().includes(origin.claimed_author.toLowerCase());
+    const decisionWeight = userDecision && origin?.attributed_actor === "user" &&
+      origin.evidence_relation !== "interpretation" ? 1.3 : namedWrite ? 1.15 : 1;
     return {
+      ...((userDecision || writes || exact || history) && origin ? { provenance: { creation_mode: origin.creation_mode, attributed_actor: origin.attributed_actor,
+        recording_actor: origin.recording_actor, claimed_author: origin.claimed_author, evidence_relation: origin.evidence_relation, completeness: origin.completeness } } : {}),
+      ...(history ? {version_status: m.version_status} : {}),
       id: m.id,
       content: m.content,
       type: m.type,
-      score: rawScore * decay * (authored ? boost : 1),
+      score: rawScore * decay * (authored ? boost : 1) * decisionWeight,
       raw_score: rawScore,
       source_layer: "memory" as const,
       source: m.source ?? null,
@@ -505,7 +527,7 @@ export async function runRecall(env: Env, input: RecallInput): Promise<RecallRes
       kind: "memory" as const,
       authored_by: authored,
       response_tendency: m.response_tendency ?? null,
-      recorded_date: m.created_at ?? null,
+      recorded_date: (evolution ? m.updated_at : m.created_at) ?? null,
       event_date: m.valid_as_of ?? null,
       fact_key: m.fact_key ?? null,
       source_message_ids: m.source_message_ids
@@ -608,7 +630,41 @@ export async function runRecall(env: Env, input: RecallInput): Promise<RecallRes
     }
   }
 
+  if (evolution && history) {
+    // In-place corrections keep the old text in the revision table. Expand only the best
+    // memory, keeping that current hit and the existing k budget.
+    const lead = allHits.find(hit => hit.source_layer === "memory" && hit.version_status !== "superseded");
+    if (lead && k > 1) {
+      const revisions = await listMemoryRevisions(env.DB, {namespace: input.namespace, memoryId: lead.id});
+      const older = revisions.slice(0, Math.min(2, k - 1)).map((revision): RecallHit => ({
+        id: revision.id, revision_of: lead.id, version_status: "superseded", content: revision.content,
+        type: revision.type ?? lead.type, score: lead.score, source_layer: "memory", kind: "memory",
+        backed: true, source: revision.source, authored_by: revision.authored_by,
+        recorded_date: revision.written_at ?? revision.created_at, fact_key: revision.fact_key,
+        source_message_ids: parseStringArray(revision.source_message_ids)
+      }));
+      if (older.length) {
+        const remaining = allHits.filter(hit => hit !== lead).slice(0, k - 1 - older.length);
+        allHits.splice(0, allHits.length, lead, ...older, ...remaining);
+      }
+    }
+    allHits.sort((a,b) => (a.event_date ?? a.recorded_date ?? "").localeCompare(b.event_date ?? b.recorded_date ?? ""));
+  }
+  let evidence: RecallResult["evidence"];
+  if (exact) {
+    const refs = [...new Set(allHits.flatMap(hit => hit.source_message_ids ?? []))];
+    // For an uncited query, use the existing original-message search. Never quote a memory or a diary.
+    const ids = refs.length ? refs : (await searchQuotes(env.DB, {namespace: input.namespace, query, limit: 2}))
+      .flatMap(hit => hit.source_ids ?? [hit.id]);
+    const rows = await getMessagesByIds(env.DB, { namespace: input.namespace, ids: ids.slice(0, 8) });
+    const messages = rows.filter(m => m.role === "user" || (m.role === "assistant" && m.capture_kind !== "includes_tool" &&
+      (!m.source?.startsWith("gateway:") || m.capture_kind === "visible")));
+    evidence = { status: !messages.length ? "unavailable" :
+      messages.length < ids.length || messages.some(m => m.content.length > 400) ? "partial" : "available",
+      messages: messages.map(m => ({id:m.id, role:m.role, created_at:m.created_at, text:m.content.slice(0, 400)})) };
+  }
   return {
+    ...(evidence ? {evidence} : {}),
     hits: allHits,
     glossary_hits: glossaryHits,
     week_blocks: weekBlocks,

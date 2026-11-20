@@ -333,7 +333,8 @@ async function performDailyMemoryDigest(
     messages,
     digest,
     messageIds,
-    extracted: extractedMemories
+    extracted: extractedMemories,
+    contextMemoryIds: existingMemories.filter(m => m.namespace === namespace).map(m => m.id)
   });
 
   // --- LMC-5 phases (after existing tidy; each isolated so failures don't scrap the night) ---

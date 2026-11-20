@@ -188,7 +188,7 @@ test("evidence shares two slots globally, with only one excerpt from a shared so
 
 test("same source id in unrelated spaces is not evidence of duplication", async () => {
   const i = input("暗号原话", ["我的暗号是月亮。", "我的暗号是太阳。"]);
-  for (const e of i.entries) e.sourceIds = ["local1"];
+  for (const e of i.entries) { e.kind = "quote"; e.speaker = "user"; e.sourceIds = ["local1"]; }
   i.entries[1].namespace = "b";
   assert.equal((await selectRecall(scoreEnv([0.9, 0.8]), i)).entries.length, 2);
 });

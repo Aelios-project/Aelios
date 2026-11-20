@@ -1,3 +1,4 @@
+import { isExplicitMemory } from "../provenance";
 import { finishDreamRun, insertDreamRun } from "../../db/dreamRuns";
 import type { DreamRunTrigger } from "../../db/dreamRuns";
 import { listMemoriesPage } from "../../db/memories";
@@ -30,6 +31,7 @@ import { speakerLabel } from "../speakers";
 
 export interface DigestMemoryUpdate {
   target_id: string;
+  source_message_ids?: string[];
   content?: string;
   type?: string;
   importance?: number;
@@ -39,6 +41,7 @@ export interface DigestMemoryUpdate {
 
 export interface DigestMemoryDelete {
   target_id: string;
+  source_message_ids?: string[];
   reason?: string;
 }
 
@@ -182,6 +185,7 @@ export function normalizeDigestResult(value: unknown): DailyDigestResult {
         return [
           {
             target_id: targetId,
+            ...(Array.isArray(record.source_message_ids) ? {source_message_ids: readStringArray(record.source_message_ids)} : {}),
             content: readString(record.content) ?? undefined,
             type: readString(record.type) ?? undefined,
             importance: typeof record.importance === "number" ? clampScore(record.importance, 0.7) : undefined,
@@ -197,7 +201,7 @@ export function normalizeDigestResult(value: unknown): DailyDigestResult {
         if (!item || typeof item !== "object" || Array.isArray(item)) return [];
         const record = item as Record<string, unknown>;
         const targetId = readString(record.target_id);
-        return targetId ? [{ target_id: targetId, reason: readString(record.reason) ?? undefined }] : [];
+        return targetId ? [{ target_id: targetId, ...(Array.isArray(record.source_message_ids) ? {source_message_ids: readStringArray(record.source_message_ids)} : {}), reason: readString(record.reason) ?? undefined }] : [];
       })
     : undefined;
 
@@ -285,6 +289,7 @@ export async function resolveWorldFactTarget(
   if (!existing || existing.namespace !== input.namespace || existing.status !== "active") return null;
   const lifecycleRows = await fetchMemoryLifecycleRows(env.DB, [existing.id]);
   const factKey = lifecycleRows[0]?.fact_key ?? null;
+  if (isExplicitMemory(existing)) return null;
   if (!isWorldFactMemory({ type: existing.type, factKey })) return null;
   return { type: existing.type, factKey };
 }

@@ -72,6 +72,8 @@ export async function captureRememberNow(
     confidence: 0.7,
     tags: ["remember_now", "verbatim"],
     source: "remember_now",
+    provenance: { creation_mode: "user_explicit", attributed_actor: "user", recording_actor: "gateway",
+      evidence_relation: "paraphrase", completeness: "partial", inputs: input.messageId ? [`message:${input.messageId}`] : [] },
     sourceMessageIds: input.messageId ? [input.messageId] : []
   });
   const indexed = await upsertMemoryFts(env.DB, {

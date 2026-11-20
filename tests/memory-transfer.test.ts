@@ -413,6 +413,7 @@ test("importing a chat history: by day, through review, quotes kept outside the 
     return importedMessageId(batch.id, day1.key, m.seq);
   }));
   extractReplies[0].memories[0].source_message_ids[0] = firstIds[0];
+  extractReplies[0].memories[1].source_message_ids = firstIds.slice(1);
 
   const r1 = await call("/v1/import/chat/chunk?namespace=default", { body: { import_id: batch.id, chunk: day1, clef: true } });
   assert.equal(r1.status, 200);
@@ -427,7 +428,7 @@ test("importing a chat history: by day, through review, quotes kept outside the 
   // Nothing went into the messages table; only the cited quotes are kept.
   assert.equal(all("SELECT * FROM messages").length, 0);
   const kept = all("SELECT id, content, day FROM imported_messages ORDER BY seq");
-  assert.deepEqual(kept.map((m) => m.content), ["我最近改喝热拿铁了", "记下啦", "晚安"]); // the 2nd memory cited nothing, so the whole day is attached
+  assert.deepEqual(kept.map((m) => m.content), ["我最近改喝热拿铁了", "记下啦", "晚安"]); // only the two candidates’ cited rows are retained
 
   const listed = await call(`/v1/import/candidates?namespace=default&import_id=${batch.id}`);
   assert.deepEqual(listed.body.counts, { pending: 2, clef_yes: 1, clef_no: 1 });
@@ -489,7 +490,7 @@ test("a broken model reply splits the chunk once; a failed chunk is recorded and
   const start = await call("/v1/import/batches?namespace=default", { body: { fingerprint: "chat-2", total_chunks: 1 } });
   const batch = start.body.data.batch;
   const day = chunkOf("2025-04-01", [["user", "一", 0], ["assistant", "二", 1], ["user", "三", 2], ["assistant", "四", 3]]);
-  extractReplies.push('{"memories": [{"content": "咲咲', { memories: [{ content: "咲咲数到了二。", type: "fact" }] }, { memories: [] });
+  extractReplies.push('{"memories": [{"content": "咲咲', { memories: [{ content: "咲咲数到了二。", type: "fact", source_message_ids: [await (await import("../src/memory/transfer/importChat")).importedMessageId(batch.id, day.key, 0)] }] }, { memories: [] });
   const result = await call("/v1/import/chat/chunk?namespace=default", { body: { import_id: batch.id, chunk: day, clef: false } });
   assert.deepEqual([result.body.data.result.status, result.body.data.result.model_calls, result.body.data.result.candidates], ["done", 3, 1]);
 

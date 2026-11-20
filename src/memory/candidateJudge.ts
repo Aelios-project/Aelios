@@ -5,12 +5,14 @@
 // 关掉 clef 后候选全部留着：人工在后台批，或者让助手自己用 MCP 的 memory_candidates / memory_review 审。
 // Dream 抽完候选后由 cron / 手动入口跑一轮。
 
+import { getMemoryById } from "../db/memories";
 import { getMessagesByIds } from "../db/messages";
 import {
   archiveMemory,
   checkMemoryRestorable,
   IMPORT_CANDIDATE_SOURCES,
   getActiveMemoryByFactKey,
+  getMemoryCandidateById,
   listMemoryCandidates,
   restoreMemory,
   supersedeMemory,
@@ -18,6 +20,8 @@ import {
   upsertMemoryByFactKey,
   type MemoryCandidateRow
 } from "../db/v2";
+import { approvedCandidateMemory } from "../db/v2/candidates";
+import { isExplicitMemory, reviewedOrigin } from "./provenance";
 import type { Env, MessageRecord } from "../types";
 import { askClef, buildClefInput, CLEF_JUDGE_NAME, CLEF_MODEL, isClefReviewOn } from "./clefJudge";
 import { createVectorMemory } from "./vectorStore";
@@ -117,6 +121,13 @@ async function callClef(
   }
 }
 
+async function targetsExplicitWrite(db: D1Database, namespace: string, candidate: MemoryCandidateRow): Promise<boolean> {
+  const id = candidate.target_memory_id ?? (candidate.fact_key
+    ? (await getActiveMemoryByFactKey(db, {namespace, factKey: candidate.fact_key}))?.id : null);
+  const row = id ? await getMemoryById(db, {namespace, id}) : null;
+  return row ? isExplicitMemory(row) : false;
+}
+
 // approve 保留 supersede 历史：有明确 target 就更新该记忆；否则有 fact_key 先查 active 同 key，
 // 有就 supersede，没有就 upsert；两者都没有才直接建条目。自动批量决策与人工审核使用同一目标语义。
 export async function approveCandidate(
@@ -133,6 +144,9 @@ export async function approveCandidate(
     return candidate.target_memory_id;
   }
 
+  const saved = await approvedCandidateMemory(env.DB, namespace, candidate.id);
+  if (saved) return saved;
+  const provenance = reviewedOrigin(candidate, source);
   const factKey = candidate.fact_key?.trim() || null;
 
   if (candidate.target_memory_id) {
@@ -146,7 +160,7 @@ export async function approveCandidate(
       confidence: candidate.confidence,
       tags,
       source,
-      sourceMessageIds,
+      sourceMessageIds, provenance,
       reason: "candidate_judge_approve"
     });
     return result.newId;
@@ -165,7 +179,7 @@ export async function approveCandidate(
         confidence: candidate.confidence,
         tags,
         source,
-        sourceMessageIds,
+        sourceMessageIds, provenance,
         reason: "candidate_judge_approve"
       });
       return result.newId;
@@ -180,7 +194,7 @@ export async function approveCandidate(
       confidence: candidate.confidence,
       tags,
       source,
-      sourceMessageIds
+      sourceMessageIds, provenance
     });
     return result.id;
   }
@@ -193,7 +207,7 @@ export async function approveCandidate(
     confidence: candidate.confidence,
     tags,
     source,
-    sourceMessageIds
+    sourceMessageIds, provenance
   });
   return created.id;
 }
@@ -237,6 +251,10 @@ export async function runCandidateJudge(
       continue;
     }
     try {
+      if (await targetsExplicitWrite(env.DB, namespace, candidate)) {
+        kept++;
+        continue;
+      }
       const sourceMessageIds = parseJsonArray(candidate.source_message_ids);
       const tags = parseJsonArray(candidate.tags);
       const messages = sourceMessageIds.length > 0
@@ -268,6 +286,12 @@ export async function runCandidateJudge(
       const decisionNote = `${judgeNotePrefix(judgedBy)}${judgeResult.reason}`;
 
       if (decision === "approve") {
+        // A manual write or a forget may land while the remote judge is running.
+        const pending = await getMemoryCandidateById(env.DB, {namespace, id: candidate.id});
+        if (!pending || pending.status !== "pending" || await targetsExplicitWrite(env.DB, namespace, pending)) {
+          kept++;
+          continue;
+        }
         const memoryId = await approveCandidate(env, namespace, candidate, tags, sourceMessageIds);
         await updateMemoryCandidateStatus(env.DB, {
           namespace,

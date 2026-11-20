@@ -3,7 +3,7 @@ import { authenticate } from "../auth/apiKey";
 import { HANDOFF_GUIDE, handoffRevision, readHandoff, validateHandoff, writeHandoff } from "../db/v2/handoff";
 import { getOrCreateConversation } from "../db/conversations";
 import { fetchMemoriesByIds, getMemoryById, listMemoriesPage } from "../db/memories";
-import { filterUnsavedMessages, getMessagesByIds, saveIngestMessages } from "../db/messages";
+import { filterUnsavedMessages, getMessagesByIds, retainedMessageIds, saveIngestMessages } from "../db/messages";
 import {
   appendNotebookPage,
   archiveMemory,
@@ -39,6 +39,8 @@ import {
 import { isClefReviewOn } from "../memory/clefJudge";
 import { exportMemories } from "../memory/export";
 import { formatSpeakerTranscript, loadSpeakersForNamespace } from "../memory/speakers";
+import { invalidateKnownInputs } from "../db/v2/revocation";
+import { explicitWrite, parseOrigin } from "../memory/provenance";
 import { buildBootPackage, isV2Enabled, runRecall } from "../memory/v2/recall";
 import { readDreamTimeZoneFromEnv } from "../memory/dailyDigest";
 import { withImpressionDisclaimer } from "../memory/impression";
@@ -206,7 +208,7 @@ function getTools(options: ToolListOptions): Array<Record<string, unknown>> {
         "something you may already know. Never say you don't remember before calling it. Returns the most relevant " +
         "memories with ids (pass an id to remember's replaces or to forget) plus matching private words, as " +
         "{ data: { hits, glossary_hits, week_blocks, meta } }. It changes no memory; it only notes which ones were " +
-        "recalled, which keeps them from expiring.",
+        "recalled, which keeps them from expiring. For exact wording, check evidence.status and quote only retained evidence.messages. Historical revision hits carry revision_of, the editable memory id.",
       annotations: { title: "Recall", ...READ_ONLY },
       inputSchema: {
         type: "object",
@@ -281,9 +283,10 @@ function getTools(options: ToolListOptions): Array<Record<string, unknown>> {
               "Optional stable key such as 'user:favorite_coffee'. Usually leave it out. If a memory with this key " +
               "exists it is replaced, keeping the old version as history."
           },
+          source_message_ids: { type: "array", items: { type: "string" }, description: "Optional retained message IDs supporting this memory." },
           authored_by: {
             type: "string",
-            description: "Optional signature marking this as hand-written; it ranks above memories distilled overnight."
+            description: "Optional author signature. This label is a claim, independent of the authenticated credential."
           },
           response_tendency: { type: "string", description: "Optional: how you want to respond when this memory comes up." },
           namespace: NAMESPACE_PARAM
@@ -696,6 +699,7 @@ async function callTool(
     const factKey = readString(args.fact_key);
     let replaces = readString(args.replaces);
     try {
+      const sourceMessageIds = await retainedMessageIds(env.DB, namespace, readStringArray(args.source_message_ids));
       // 传了已有的 fact_key 也走替换，旧版本留作历史；remember 从不原地覆盖。
       if (!replaces && factKey) replaces = (await getActiveMemoryByFactKey(env.DB, { namespace, factKey }))?.id;
       if (replaces) {
@@ -712,6 +716,8 @@ async function callTool(
           confidence: readNumber(args.confidence, 0.8),
           tags: readStringArray(args.tags),
           source: "mcp",
+          provenance: explicitWrite(profile, "mcp", readString(args.authored_by)),
+          sourceMessageIds,
           authoredBy: readString(args.authored_by) || null,
           responseTendency: readString(args.response_tendency) || null
         });
@@ -730,6 +736,8 @@ async function callTool(
         confidence: readNumber(args.confidence, 0.8),
         tags: readStringArray(args.tags),
         source: "mcp",
+        provenance: explicitWrite(profile, "mcp", readString(args.authored_by)),
+        sourceMessageIds,
         validAsOf: readString(args.valid_as_of),
         authoredBy: readString(args.authored_by) || null,
         responseTendency: readString(args.response_tendency) || null
@@ -741,10 +749,16 @@ async function callTool(
   }
 
   if (name === "forget") {
-    return callTool(env, ctx, profile, {
-      name: readBoolean(args.permanent) ? "memory_delete" : "memory_archive",
-      arguments: args
-    });
+    if (!hasScope(profile, "memory:write")) return toolError("Missing memory:write scope");
+    const id = readString(args.id);
+    if (!id) return toolError("id is required");
+    const namespace = resolveNamespace(profile, args.namespace);
+    try {
+      if (readBoolean(args.permanent)) return await callTool(env, ctx, profile, { name: "memory_delete", arguments: args });
+      if (!isV2Enabled(env)) return toolError("memory_archive requires MEMORY_LIFECYCLE_ENABLED=true");
+      if (!await invalidateKnownInputs(env, { namespace, id }, "memory")) return toolError("Memory not found");
+      return textToolResult({ data: { id, archived: true } });
+    } catch { return toolError("Memory cleanup incomplete; retry forget"); }
   }
 
   if (name === "search_chat") {
@@ -900,7 +914,7 @@ async function callTool(
     }
 
     const memory = await getVectorMemory(env, id);
-    if (!memory) return toolError("Memory not found");
+    if (!memory || memory.namespace !== resolveNamespace(profile, args.namespace)) return toolError("Memory not found");
     return textToolResult({ data: memory });
   }
 
@@ -919,6 +933,8 @@ async function callTool(
       return textToolResult({ data: { id, deleted: true } });
     }
 
+    const legacy = await getVectorMemory(env, id);
+    if (!legacy || legacy.namespace !== resolveNamespace(profile, args.namespace)) return toolError("Memory not found");
     await deleteVectorMemory(env, id);
     return textToolResult({
       data: {
@@ -989,7 +1005,7 @@ async function callTool(
       k: readNumber(args.k, 20),
       min_score: typeof args.min_score === "number" ? readNumber(args.min_score, 0.15) : undefined,
       types: readStringArray(args.types),
-      include_history: readBoolean(args.include_history, false)
+      include_history: args.include_history === undefined ? undefined : readBoolean(args.include_history, false)
     });
     return textToolResult({ data: result });
   }
@@ -1041,6 +1057,7 @@ async function callTool(
         confidence: readNumber(args.confidence, 0.8),
         tags: readStringArray(args.tags),
         source: readString(args.source) || "mcp",
+        provenance: explicitWrite(profile, "mcp", readString(args.authored_by)),
         validAsOf: readString(args.valid_as_of),
         authoredBy: readString(args.authored_by) || null,
         responseTendency: readString(args.response_tendency) || null
@@ -1069,6 +1086,7 @@ async function callTool(
         reason: readString(args.reason),
         // MCP 走的是亲手通道：source 记 "mcp"，E 轴字段随之生效 (也能亲手 supersede 亲笔记忆)。
         source: "mcp",
+        provenance: explicitWrite(profile, "mcp", readString(args.authored_by)),
         authoredBy: readString(args.authored_by) || null,
         responseTendency: readString(args.response_tendency) || null
       });
@@ -1165,7 +1183,8 @@ async function callTool(
         namespace,
         candidate,
         parseJsonArray(candidate.tags),
-        parseJsonArray(candidate.source_message_ids)
+        parseJsonArray(candidate.source_message_ids),
+        "mcp_review"
       );
       await updateMemoryCandidateStatus(env.DB, { namespace, id, status: "approved", targetMemoryId: memoryId, decisionNote });
       return textToolResult({ data: { id, status: "approved", memory_id: memoryId } });
@@ -1183,7 +1202,7 @@ async function callTool(
       const memory = await getMemoryById(env.DB, { namespace, id: memoryId });
       if (!memory) return toolError("Memory not found");
       const source = await traceMemorySource(env.DB, { namespace, memory, timeZone });
-      return textToolResult({ data: { memory_id: memory.id, memory: memory.content, source } });
+      return textToolResult({ data: { memory_id: memory.id, memory: memory.content, source, ...(memory.provenance ? {provenance: parseOrigin(memory.provenance)} : {}) } });
     }
     const week = readString(args.week);
     if (week && !/^\d{4}-W\d{2}$/.test(week)) {

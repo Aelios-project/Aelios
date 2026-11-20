@@ -377,6 +377,7 @@ test("same-timestamp messages are not skipped after a mid-batch cut", async () =
   const ts = "2026-09-06T12:00:00.000Z";
   sqlite.prepare("INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run("msg_a", "c", "ns", "user", "先说", "gw", ts, 0);
   sqlite.prepare("INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run("msg_b", "c", "ns", "assistant", "后说", "gw", ts, 1);
+  sqlite.exec("ALTER TABLE messages ADD COLUMN capture_kind TEXT");
   const db = {
     prepare(sql: string) {
       const statement = sqlite.prepare(sql);
@@ -684,6 +685,7 @@ test("same-timestamp gateway hashes keep ask-then-answer order", async () => {
   sqlite.prepare("INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
     "gw_user_aaaa", "c", "ns", "user", "调试暗号是什么？", "gw", ts, 0
   );
+  sqlite.exec("ALTER TABLE messages ADD COLUMN capture_kind TEXT");
   const rows = await listMessagesByNamespaceInRange(wrapSqlite(sqlite) as any, {
     namespace: "ns",
     startCreatedAt: "2026-09-06T00:00:00.000Z",

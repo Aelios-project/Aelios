@@ -61,6 +61,8 @@ function normalizeCandidate(item: unknown): ExtractedMemory | null {
     confidence: clampScore(raw.confidence, 0.72),
     tags: readStringArray(raw.tags),
     source_message_ids: readStringArray(raw.source_message_ids),
+    attributed_role: raw.attributed_role === "user" || raw.attributed_role === "assistant" ? raw.attributed_role : undefined,
+    evidence_quote: readString(raw.evidence_quote) ?? undefined,
     fact_key: readString(raw.fact_key) ?? undefined
   };
 }
@@ -83,6 +85,27 @@ function parseExtractModelOutput(text: string): ExtractedMemory[] | null {
     console.warn("dream extract: dropped unusable candidates", { dropped: memories.length - kept.length, kept: kept.length });
   }
   return kept;
+}
+
+// Match against the actual captured batch. A plausible model-generated ID, role or quote alone proves nothing.
+function groundCandidate(memory: ExtractedMemory, messages: MessageRecord[]): ExtractedMemory[] {
+  const ids = new Set(memory.source_message_ids);
+  const cited = messages.filter(m => ids.has(m.id));
+  if (!cited.length) return [];
+  const quote = memory.evidence_quote;
+  const role = memory.attributed_role;
+  const support = cited.filter(m => m.role === role && quote && m.content.includes(quote) &&
+    (role !== "assistant" || (m.capture_kind !== "includes_tool" &&
+      (!m.source?.startsWith("gateway:") || m.capture_kind === "visible"))));
+  if ((role || quote) && (!role || !support.length)) return [];
+  const evidence = support.length ? support : cited;
+  const deciding = memory.type === "decision" || /决定|确定选择|decided|committed to/i.test(memory.content);
+  if (deciding && evidence.every(m =>
+    /[?？]$/.test(m.content.trim()) || /^(?:maybe|perhaps|should I|我在考虑|要不要)/i.test(m.content.trim()))) return [];
+  for (const match of memory.content.matchAll(/「([^」]+)」/g)) {
+    if (!evidence.some(m => m.content.includes(match[1]))) return [];
+  }
+  return [{ ...memory, evidence_quote: undefined, source_message_ids: evidence.map(m => m.id) }];
 }
 
 function formatTranscript(messages: MessageRecord[], speakers: DreamSpeakers | null): string {
@@ -112,6 +135,7 @@ function exampleMemoryContent(speakers: DreamSpeakers | null): string {
 }
 
 export interface DiaryBackground {
+  updated_at?: string;
   date: string;
   title: string;
   summary: string;
@@ -163,6 +187,8 @@ export function buildDreamExtractPrompt(
     "- 不保存普通寒暄、临时任务、调试口令、纯情绪噪音、后端实现流水账。",
     ...speakerWritingRules(speakers),
     "- 每条记忆只围绕一个人物的一件事或一项偏好。不同话题分开；同一事件的相邻发言合成一条，source_message_ids 保留全部依据。",
+    "- 可记录助手亲口说出的长期立场、反思、更正和承诺，写明是其表达。工具参数、猜测、提问、备选方案和沉默不能作为用户决定，也不要替任何人写内心独白。后续明确修正才改变当前结论，矛盾未解时保留不确定。",
+    "- attributed_role 写这条陈述的说话人。evidence_quote 从支持该陈述的消息里逐字摘录一句。",
     "- 正文写清主体和必要时间，保留否定、条件、计划/完成状态。不能把工具调用当作已执行成功，不能把计划写成经历。",
     "- from 哈希、msg_id、传输信封不写入正文，消息 ID 只放 source_message_ids。",
     "- 信息类（fact/decision/habit 等稳定事实）：content 压到 1-2 句自然短句。",
@@ -193,6 +219,8 @@ export function buildDreamExtractPrompt(
           importance: 0.86,
           confidence: 0.92,
           tags: ["decision", "personal"],
+          attributed_role: "user",
+          evidence_quote: "<支持这条记忆的原句>",
           source_message_ids: ["msg_x"]
         }
       ]
@@ -247,7 +275,8 @@ async function callDreamExtractModel(
       });
       return { memories: [], model, reason: "model_invalid_json", usage, finishReason };
     }
-    return { memories, model, usage, finishReason };
+    const grounded = memories.flatMap(memory => groundCandidate(memory, messages));
+    return { memories: grounded.map(memory => ({ ...memory, context_dates: background.map(day => `${day.date}@${day.updated_at ?? ""}`) })), model, usage, finishReason };
   } catch (error) {
     console.error("dream extract: model failed", { model, error });
     return { memories: [], model, reason: error instanceof DreamModelTimeoutError ? "model_timeout" : "model_error" };
@@ -262,7 +291,7 @@ async function loadDiaryBackground(env: Env, namespace: string, dateLabel: strin
       startDate: addDaysToDateLabel(dateLabel, -DIARY_BACKGROUND_DAYS, timeZone),
       endDate: addDaysToDateLabel(dateLabel, -1, timeZone)
     });
-    return rows.map((row) => ({ date: row.date, title: row.title, summary: row.summary }));
+    return rows.map((row) => ({ date: row.date, updated_at: row.updated_at, title: row.title, summary: row.summary }));
   } catch (error) {
     console.error("dream extract: failed to load diary background", { namespace, dateLabel, error });
     return [];
@@ -284,6 +313,8 @@ export async function extractDreamMemoriesFromMessages(
     deadlineAt?: number;
   }
 ): Promise<DreamExtractModelResult> {
+  const messages = input.messages.filter(message => message.namespace === input.namespace);
+  if (!messages.length) return { memories: [] };
   const [activeFactKeys, background] = await Promise.all([
     listActiveFactKeys(env.DB, { namespace: input.namespace }),
     input.dateLabel && input.diaryBackground !== false
@@ -296,5 +327,5 @@ export async function extractDreamMemoriesFromMessages(
   const speakers = input.speakers !== undefined
     ? input.speakers
     : speakersForNamespace(await loadConfig(env), input.namespace);
-  return callDreamExtractModel(env, input.messages, existingFactKeys, speakers, background, input.deadlineAt);
+  return callDreamExtractModel(env, messages, existingFactKeys, speakers, background, input.deadlineAt);
 }

@@ -302,3 +302,53 @@ test("background calls through AI Gateway send no temperature: newer Claude mode
     assert.ok(!("temperature" in body), JSON.stringify(body).slice(0, 200));
   }
 });
+
+test("Dream grounds speaker and modality in the supplied batch; tool arguments and another space cannot attest speech", async (t) => {
+  const rows = messages(4);
+  Object.assign(rows[0], { content: "Should I abandon DSH?" });
+  Object.assign(rows[1], { content: "I decided to integrate ACP." });
+  Object.assign(rows[2], {
+    role: "assistant",
+    source: "gateway:gpt",
+    capture_kind: "visible",
+    content: "I prefer the small adapter."
+  });
+  Object.assign(rows[3], {
+    role: "assistant",
+    source: "gateway:gpt",
+    capture_kind: "includes_tool",
+    content: 'send {"text":"I promised to switch."}'
+  });
+  const proposal = (i: number, content: string, role: string, quote: string) => ({
+    type: "decision",
+    content,
+    attributed_role: role,
+    evidence_quote: quote,
+    source_message_ids: [rows[i].id]
+  });
+  const approved = proposal(1, "The user chose ACP.", "user", rows[1].content);
+  const spoken = proposal(2, "The assistant prefers the small adapter.", "assistant", rows[2].content);
+  const reply = {
+    memories: [
+      approved,
+      spoken,
+      proposal(0, "The user abandoned DSH.", "user", rows[0].content),
+      proposal(2, "The user prefers the adapter.", "user", rows[2].content),
+      proposal(2, "It promised forever.", "assistant", "forever"),
+      proposal(3, "It promised to switch.", "assistant", "I promised to switch."),
+      { ...spoken, source_message_ids: ["not-in-this-batch"] }
+    ]
+  };
+  const { env } = fixture(t, () => ({ response: JSON.stringify(reply) }));
+  const run = (batch: MessageRecord[]) =>
+    extractDreamMemoriesFromMessages(env, { namespace: "default", messages: batch, speakers: null });
+  const result = await run(rows);
+  assert.deepEqual(
+    result.memories.map((m) => [m.content, m.attributed_role, m.source_message_ids]),
+    [
+      [approved.content, "user", ["msg_1"]],
+      [spoken.content, "assistant", ["msg_2"]]
+    ]
+  );
+  assert.deepEqual((await run([])).memories, []);
+});

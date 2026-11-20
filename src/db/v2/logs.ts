@@ -10,6 +10,7 @@ export interface DailyLogRow {
   date: string;
   title: string;
   summary: string;
+  input_refs?: string[];
   source_message_ids: string[];
   updated_at: string;
 }
@@ -23,6 +24,7 @@ type DailyLogDbRow = {
   date: string;
   title: string;
   summary: string;
+  input_refs?: string | null;
   source_message_ids?: string | null;
   updated_at: string;
 };
@@ -33,6 +35,7 @@ function mapDailyLog(row: DailyLogDbRow): DailyLogRow {
     date: row.date,
     title: row.title,
     summary: row.summary,
+    ...(row.input_refs ? {input_refs: parseStringArray(row.input_refs)} : {}),
     source_message_ids: readSourceMessageIds(row.source_message_ids),
     updated_at: row.updated_at
   };
@@ -40,10 +43,10 @@ function mapDailyLog(row: DailyLogDbRow): DailyLogRow {
 
 export async function getDailyLog(
   db: D1Database,
-  input: { namespace: string; date: string }
+  input: { namespace: string; date: string; includeInputs?: boolean }
 ): Promise<DailyLogRow | null> {
   const row = await db
-    .prepare("SELECT namespace, date, title, summary, source_message_ids, updated_at FROM daily_log WHERE namespace = ? AND date = ?")
+    .prepare(`SELECT namespace, date, title, summary, source_message_ids, updated_at${input.includeInputs ? ",input_refs" : ""} FROM daily_log WHERE namespace = ? AND date = ?`)
     .bind(input.namespace, input.date)
     .first<DailyLogDbRow>();
   return row ? mapDailyLog(row) : null;
@@ -51,21 +54,22 @@ export async function getDailyLog(
 
 export async function upsertDailyLog(
   db: D1Database,
-  input: { namespace: string; date: string; title: string; summary: string; sourceMessageIds?: string[] }
+  input: { namespace: string; date: string; title: string; summary: string; inputRefs?: string[]; sourceMessageIds?: string[] }
 ): Promise<DailyLogRow> {
   const now = nowIso();
   const sourceMessageIds = [...new Set((input.sourceMessageIds ?? []).filter(Boolean))];
   const encoded = JSON.stringify(sourceMessageIds);
   await db
     .prepare(
-      `INSERT INTO daily_log (namespace, date, title, summary, source_message_ids, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO daily_log (namespace, date, title, summary, source_message_ids, updated_at, input_refs) VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(namespace, date) DO UPDATE SET
          title = excluded.title,
          summary = excluded.summary,
          source_message_ids = excluded.source_message_ids,
+         input_refs = excluded.input_refs,
          updated_at = excluded.updated_at`
     )
-    .bind(input.namespace, input.date, input.title, input.summary, encoded, now)
+    .bind(input.namespace, input.date, input.title, input.summary, encoded, now, JSON.stringify(input.inputRefs ?? []))
     .run();
   return {
     namespace: input.namespace,

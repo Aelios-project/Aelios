@@ -1,3 +1,5 @@
+import { invalidateKnownInputs } from "./revocation";
+import type { MemoryProvenance } from "../../memory/provenance";
 import { upsertMemoryEmbedding } from "../../memory/embedding";
 import { deleteFtsRow, upsertMemoryFts } from "../../memory/fts";
 import { storedMemoryType, WORLD_FACT_TYPE } from "../../memory/canonicalTypes";
@@ -177,6 +179,7 @@ export async function upsertMemoryByFactKey(
     confidence?: number;
     tags?: string[];
     source?: string | null;
+    provenance?: MemoryProvenance;
     sourceMessageIds?: string[];
     validAsOf?: string | null;
     authoredBy?: string | null;
@@ -223,7 +226,7 @@ export async function upsertMemoryByFactKey(
     await db
       .prepare(
         `UPDATE memories SET content = ?, type = ?, importance = ?, confidence = ?,
-          tags = ?, source = ?, source_message_ids = ?, updated_at = ?,
+          tags = ?, source = ?, provenance = ?, source_message_ids = ?, updated_at = ?,
           fact_key = ?, version_status = COALESCE(version_status, 'current')${
             handSource ? ", authored_by = ?, response_tendency = ?" : ""
           }
@@ -237,6 +240,7 @@ export async function upsertMemoryByFactKey(
         input.confidence ?? 0.8,
         JSON.stringify(input.tags ?? []),
         input.source ?? null,
+        JSON.stringify(input.provenance) ?? null,
         JSON.stringify(input.sourceMessageIds ?? []),
         now,
         input.factKey,
@@ -271,8 +275,8 @@ export async function upsertMemoryByFactKey(
       `INSERT INTO memories (
         id, namespace, type, content, importance, confidence, status, pinned,
         tags, source, source_message_ids, vector_id, created_at, updated_at, expires_at,
-        fact_key, version_status, superseded_by, authored_by, response_tendency
-      ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, null, ?, 'current', null, ?, ?)`
+        fact_key, version_status, superseded_by, authored_by, response_tendency, provenance
+      ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, null, ?, 'current', null, ?, ?, ?)`
     )
     .bind(
       id,
@@ -290,7 +294,7 @@ export async function upsertMemoryByFactKey(
       now,
       input.factKey,
       eAxis.authoredBy,
-      eAxis.responseTendency
+      eAxis.responseTendency, JSON.stringify(input.provenance) ?? null
     )
     .run();
 
@@ -417,6 +421,7 @@ export async function supersedeMemory(
     confidence?: number;
     tags?: string[];
     source?: string | null;
+    provenance?: MemoryProvenance;
     sourceMessageIds?: string[];
     authoredBy?: string | null;
     responseTendency?: string | null;
@@ -468,114 +473,47 @@ export async function supersedeMemory(
     }
   }
   const newFactKey = inheritedFactKey;
+  const origin = input.provenance;
+  // The reviewer/digest saw this specific predecessor. A hand-written replacement
+  // has its own content and retains just the ordinary version link.
+  const provenance = old && origin && (origin.candidate_id || origin.creation_mode === "dream_derived")
+    ? { ...origin, inputs: [...new Set([...(origin.inputs ?? []), `memory:${old.id}`])] }
+    : origin;
 
-  if (!old) {
-    await db
-      .prepare(
-        `INSERT INTO memories (
-          id, namespace, type, content, importance, confidence, status, pinned,
-          tags, source, source_message_ids, vector_id, created_at, updated_at, expires_at,
-          fact_key, version_status, superseded_by, authored_by, response_tendency
-        ) VALUES (?, ?, ?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, null, ?, 'current', null, ?, ?)`
-      )
-      .bind(
-        nextId,
-        input.namespace,
-        storedMemoryType(input.newType, "fact", input.allowWorldFact),
-        input.newContent,
-        input.importance ?? 0.6,
-        input.confidence ?? 0.8,
-        JSON.stringify(input.tags ?? []),
-        effectiveSource,
-        JSON.stringify(input.sourceMessageIds ?? []),
-        nextVectorId,
-        input.createdAt || now,
-        now,
-        newFactKey,
-        eAxis.authoredBy,
-        eAxis.responseTendency
-      )
-      .run();
-    await db
-      .prepare(
-        `INSERT INTO memory_lifecycle (
-          memory_id, namespace, fact_key, supersedes_id, review_reason, valid_as_of, last_seen_at, seen_count, last_injected_at
-        ) VALUES (?, ?, ?, NULL, ?, ?, ?, 0, NULL)`
-      )
-      .bind(nextId, input.namespace, newFactKey, input.reason ?? null, input.validAsOf ?? null, now)
-      .run();
-    await syncMemoryVector(env, { namespace: input.namespace, id: nextId });
-    await upsertMemoryFts(env.DB, { namespace: input.namespace, memoryId: nextId, content: input.newContent });
-    return { oldStatus: "missing", newId: nextId };
+  // A rejected candidate or a concurrent forget must roll back the entire transition.
+  const statements: D1PreparedStatement[] = [];
+  if (old) {
+    statements.push(
+      db.prepare(`UPDATE memories SET status = 'superseded', version_status = 'superseded', superseded_by = ?, updated_at = ?
+        WHERE id = ? AND namespace = ?`).bind(nextId, now, old.id, input.namespace),
+      db.prepare("INSERT OR IGNORE INTO memory_lifecycle (memory_id, namespace, seen_count) VALUES (?, ?, 0)")
+        .bind(old.id, input.namespace),
+      db.prepare("UPDATE memory_lifecycle SET superseded_by_id = ?, review_reason = ? WHERE memory_id = ?")
+        .bind(nextId, input.reason ?? null, old.id)
+    );
   }
-
-  // 1. 旧条：status + version_status + superseded_by (本体不删)
-  await db
-    .prepare(
-      `UPDATE memories
-       SET status = 'superseded', version_status = 'superseded', superseded_by = ?, updated_at = ?
-       WHERE id = ?`
-    )
-    .bind(nextId, now, old.id)
-    .run();
-  // 确保旧条侧车行存在再更新
-  await db
-    .prepare(
-      `INSERT OR IGNORE INTO memory_lifecycle (memory_id, namespace, seen_count)
-       VALUES (?, ?, 0)`
-    )
-    .bind(old.id, input.namespace)
-    .run();
-  await db
-    .prepare(
-      "UPDATE memory_lifecycle SET superseded_by_id = ?, review_reason = ? WHERE memory_id = ?"
-    )
-    .bind(nextId, input.reason ?? null, old.id)
-    .run();
-
-  // 2. 插新条目 (current，继承 fact_key)。
-  //    新条 E 轴取显式入参 (只有亲手来源能传)；没传则继承旧条 (亲笔链不断，倾向同理)。
-  const nextAuthoredBy = eAxis.authoredBy ?? old.authored_by;
-  const nextResponseTendency = eAxis.responseTendency ?? old.response_tendency;
-  await db
-    .prepare(
-      `INSERT INTO memories (
-        id, namespace, type, content, importance, confidence, status, pinned,
-        tags, source, source_message_ids, vector_id, created_at, updated_at, expires_at,
-        fact_key, version_status, superseded_by, authored_by, response_tendency
-      ) VALUES (?, ?, ?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, null, ?, 'current', null, ?, ?)`
-    )
-    .bind(
-      nextId,
-      input.namespace,
-      // 没给新类型时继承旧条的：改写一条世界知识，新版本还是世界知识。
-      storedMemoryType(input.newType ?? old.type, "fact", input.allowWorldFact || (input.newType == null && old.type === WORLD_FACT_TYPE)),
-      input.newContent,
-      input.importance ?? 0.6,
-      input.confidence ?? 0.8,
-      JSON.stringify(input.tags ?? []),
-      effectiveSource,
-      JSON.stringify(input.sourceMessageIds ?? []),
-      nextVectorId,
-      input.createdAt || now,
-      now,
-      newFactKey,
-      nextAuthoredBy,
-      nextResponseTendency
-    )
-    .run();
-  await db
-    .prepare(
-      `INSERT INTO memory_lifecycle (
-        memory_id, namespace, fact_key, supersedes_id, review_reason, valid_as_of, last_seen_at, seen_count, last_injected_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL)`
-    )
-    .bind(nextId, input.namespace, newFactKey, old.id, input.reason ?? null, input.validAsOf ?? null, now)
-    .run();
-
+  statements.push(
+    db.prepare(`INSERT INTO memories (
+      id, namespace, type, content, importance, confidence, status, pinned,
+      tags, source, source_message_ids, vector_id, created_at, updated_at, expires_at,
+      fact_key, version_status, superseded_by, authored_by, response_tendency, provenance
+    ) VALUES (?, ?, ?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, null, ?, 'current', null, ?, ?, ?)`)
+      .bind(nextId, input.namespace,
+        storedMemoryType(input.newType ?? old?.type, "fact", input.allowWorldFact || (input.newType == null && old?.type === WORLD_FACT_TYPE)),
+        input.newContent, input.importance ?? 0.6, input.confidence ?? 0.8, JSON.stringify(input.tags ?? []),
+        effectiveSource, JSON.stringify(input.sourceMessageIds ?? []), nextVectorId, input.createdAt || now, now,
+        newFactKey, eAxis.authoredBy ?? old?.authored_by ?? null, eAxis.responseTendency ?? old?.response_tendency ?? null,
+        JSON.stringify(provenance) ?? null),
+    db.prepare(`INSERT INTO memory_lifecycle (
+      memory_id, namespace, fact_key, supersedes_id, review_reason, valid_as_of, last_seen_at, seen_count, last_injected_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL)`)
+      .bind(nextId, input.namespace, newFactKey, old?.id ?? null, input.reason ?? null, input.validAsOf ?? null, now)
+  );
+  await db.batch(statements);
   // 3. 同步向量：新条目 upsert，旧条目下架
   await syncMemoryVector(env, { namespace: input.namespace, id: nextId });
   await upsertMemoryFts(env.DB, { namespace: input.namespace, memoryId: nextId, content: input.newContent });
+  if (!old) return { oldStatus: "missing", newId: nextId };
   if (old.vector_id) {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
@@ -748,31 +686,12 @@ export async function deleteMemoryV2(
   input: { namespace: string; id: string }
 ): Promise<boolean> {
   const db = env.DB;
-  const existing = await db
-    .prepare("SELECT id, vector_id FROM memories WHERE namespace = ? AND id = ?")
-    .bind(input.namespace, input.id)
-    .first<{ id: string; vector_id: string | null }>();
-  if (!existing) return false;
-
-  // 先下架向量再删 D1：向量删除失败时保留 D1 作 tombstone，
-  // 否则 searchWithVectorize 会把 stale vector 当 legacy 记录放回召回（删除后复活）。
-  if (existing.vector_id && env.VECTORIZE) {
-    try {
-      await env.VECTORIZE.deleteByIds([existing.vector_id]);
-    } catch (error) {
-      console.error("v2 vector delete (hard) failed, keeping D1 tombstone", { id: input.id, error });
-      return false;
-    }
-  }
-
-  await db.prepare("DELETE FROM memory_lifecycle WHERE memory_id = ?").bind(input.id).run();
-  // 改写前留的旧版跟着删，不然「删掉」之后旧文本还在。
-  await db.prepare("DELETE FROM memory_revisions WHERE memory_id = ?").bind(input.id).run();
-  await db
-    .prepare("DELETE FROM memories WHERE namespace = ? AND id = ?")
-    .bind(input.namespace, input.id)
-    .run();
-  await deleteFtsRow(db, "memory_fts", "memory_id", input.id);
+  if (!await invalidateKnownInputs(env, input, "memory")) return false;
+  await db.batch([
+    db.prepare("DELETE FROM memory_revisions WHERE namespace=? AND memory_id=?").bind(input.namespace, input.id),
+    db.prepare("DELETE FROM memory_lifecycle WHERE namespace=? AND memory_id=?").bind(input.namespace, input.id),
+    db.prepare("DELETE FROM memories WHERE namespace=? AND id=?").bind(input.namespace, input.id)
+  ]);
   return true;
 }
 
@@ -872,6 +791,7 @@ export async function listMemoriesCreatedInRange(
       `SELECT id, type, content, importance, status, created_at
        FROM memories
        WHERE namespace = ?
+         AND NOT EXISTS (SELECT 1 FROM memory_revocations r WHERE r.namespace=memories.namespace AND r.ref='memory:' || memories.id)
          AND created_at >= ? AND created_at < ?
          AND (source IS NULL OR source != 'import')
        ORDER BY created_at DESC
@@ -893,6 +813,7 @@ export async function listMemoriesGoneDormantInRange(
       `SELECT id, type, content, importance, status, superseded_by, updated_at
        FROM memories
        WHERE namespace = ?
+         AND NOT EXISTS (SELECT 1 FROM memory_revocations r WHERE r.namespace=memories.namespace AND r.ref='memory:' || memories.id)
          AND status IN ('superseded', 'archived')
          AND updated_at >= ? AND updated_at < ?
        ORDER BY updated_at DESC

@@ -57,7 +57,7 @@ export function buildDigestPrompt(input: {
     "总原则：",
     "- 原始聊天不要逐条变成记忆，只保留未来真的会用到的事实、偏好、边界、项目进展、承诺。",
     "- 宁可少记，也不要把临时语气、寒暄、重复话、空内容、调试内容写进长期记忆。",
-    "- 当旧记忆和新信息冲突时，优先更新或删除旧记忆，不要并排留下互相打架的版本。",
+    "- 只有明确更正才取代旧立场。提问、备选、推测和沉默不算决定。矛盾未决时留待审核；写清谁说了什么。",
     "- 当新信息只是旧记忆的更准确版本，优先 memories_to_update，不要 memories_to_add。",
     "- 稳定事实的首次抽取由 dream 夜间管线负责，产物全部进审核队列；memories_to_add 默认给空数组。",
     "- 当多条旧记忆重复，保留更完整的一条并删除重复项；必要时先 update 保留项。",
@@ -87,6 +87,7 @@ export function buildDigestPrompt(input: {
       memories_to_update: [
         {
           target_id: "mem_x",
+          source_message_ids: ["<支持更正的消息 ID>"],
           content: "更新后的旧记忆正文",
           type: "fact",
           importance: 0.88,
@@ -94,7 +95,7 @@ export function buildDigestPrompt(input: {
           tags: ["project"]
         }
       ],
-      memories_to_delete: [{ target_id: "mem_y", reason: "空内容或重复" }]
+      memories_to_delete: [{ target_id: "mem_y", source_message_ids: ["<支持归档的消息 ID>"], reason: "空内容或重复" }]
     }),
     "",
     "旧长期记忆候选：",

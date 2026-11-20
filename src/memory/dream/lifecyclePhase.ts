@@ -5,6 +5,7 @@ import {
   upsertDailyLog
 } from "../../db/v2";
 import { getMemoryById } from "../../db/memories";
+import { dreamOrigin } from "../provenance";
 import { WORLD_FACT_TYPE } from "../canonicalTypes";
 import type { Env, MessageRecord } from "../../types";
 import { readString } from "../../utils/parse";
@@ -30,6 +31,7 @@ export async function applyDreamV2(
     messages: MessageRecord[];
     digest: DailyDigestResult;
     messageIds: string[];
+    contextMemoryIds?: string[];
     extracted: ExtractedMemory[];
   }
 ): Promise<{
@@ -41,6 +43,8 @@ export async function applyDreamV2(
   errors: Array<{ target_id: string; reason: string }>;
 }> {
   const { namespace, strategy, dateLabel, digest, messageIds, extracted } = input;
+  const origin = dreamOrigin(messageIds, input.contextMemoryIds);
+  const evidence = (refs?: string[]) => [...new Set(refs)].filter(id => messageIds.includes(id));
   const isReview = strategy === "review";
   let updated = 0;
   const deleted = 0;
@@ -75,7 +79,8 @@ export async function applyDreamV2(
         confidence: item.confidence ?? 0.72,
         importance: item.importance ?? 0.72,
         tags: item.tags,
-        sourceMessageIds: item.source_message_ids.length ? item.source_message_ids : messageIds,
+        sourceMessageIds: evidence(item.source_message_ids),
+        provenance: origin,
         source: "dream_add"
       });
       queuedCandidates += 1;
@@ -94,7 +99,7 @@ export async function applyDreamV2(
   for (const item of memoriesToUpdate) {
     try {
       const worldFactTarget = await resolveWorldFactTarget(env, { namespace, targetId: item.target_id });
-      if (worldFactTarget && item.content) {
+      if (worldFactTarget && item.content && evidence(item.source_message_ids).length) {
         await supersedeMemory(env, {
           namespace,
           oldId: item.target_id,
@@ -107,7 +112,8 @@ export async function applyDreamV2(
           confidence: item.confidence,
           tags: item.tags,
           source: "dream",
-          sourceMessageIds: messageIds,
+          sourceMessageIds: evidence(item.source_message_ids),
+          provenance: origin,
           reason: "dream_world_fact"
         });
         updated++;
@@ -132,7 +138,8 @@ export async function applyDreamV2(
         confidence: item.confidence ?? 0.72,
         importance: item.importance ?? 0.72,
         tags: item.tags,
-        sourceMessageIds: messageIds,
+        sourceMessageIds: evidence(item.source_message_ids),
+        provenance: origin,
         source: "dream_update",
         targetMemoryId: item.target_id
       });
@@ -147,7 +154,7 @@ export async function applyDreamV2(
   for (const item of memoriesToDelete) {
     try {
       const existing = await getVectorMemory(env, item.target_id, { requireD1Backing: true });
-      if (!existing || existing.status !== "active" || existing.pinned) continue;
+      if (!existing || existing.namespace !== namespace || existing.status !== "active" || existing.pinned) continue;
 
       await createMemoryCandidate(env.DB, {
         namespace,
@@ -157,7 +164,8 @@ export async function applyDreamV2(
         confidence: 0.72,
         importance: existing.importance,
         tags: [],
-        sourceMessageIds: messageIds,
+        sourceMessageIds: evidence(item.source_message_ids),
+        provenance: origin,
         source: "dream_delete",
         targetMemoryId: item.target_id,
         decisionNote: item.reason ?? "dream_delete"
@@ -175,7 +183,8 @@ export async function applyDreamV2(
     date: dateLabel,
     title: digest.title ?? dateLabel,
     summary: digest.summary ?? "",
-    sourceMessageIds: messageIds
+    sourceMessageIds: messageIds,
+    inputRefs: origin.inputs
   });
 
   return { added: 0, updated, deleted, queuedCandidates, longtail: 0, errors };
@@ -190,6 +199,7 @@ export async function runLifecyclePhase(
     messages: MessageRecord[];
     digest: DailyDigestResult;
     messageIds: string[];
+    contextMemoryIds?: string[];
     extracted: ExtractedMemory[];
   }
 ): Promise<Awaited<ReturnType<typeof applyDreamV2>>> {

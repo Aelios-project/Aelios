@@ -1,3 +1,4 @@
+import { asksForExactWording } from "./quotes";
 /** One final decision across all authorized spaces and memory sources. */
 import type { Env } from "../types";
 import { cleanMessageText } from "../utils/sanitize";
@@ -173,11 +174,13 @@ function pickEntries(
   const texts = new Set<string>();
   const facts = new Set<string>();
   const limit = Math.min(input.maxItems, purpose === "answer" ? 2 : 1);
+  const exactQuote = asksForExactWording(input.query);
   for (const r of ranked) {
     const sourceKeys = (r.c.entry.sourceIds || []).map(id => `${r.c.entry.namespace}\n${id}`);
     const factKey = r.c.entry.factKey ? `${r.c.entry.namespace}\n${r.c.entry.factKey}` : "";
     const textKey = `${r.c.entry.speaker || ""}\n${r.c.entry.eventDate || ""}\n${canonical(r.text)}`;
-    const reason = threshold !== null && r.score < threshold ? "below_rerank_threshold"
+    const reason = exactQuote && (r.c.entry.kind !== "quote" || !["user", "assistant"].includes(r.c.entry.speaker ?? "")) ? "original_unavailable"
+      : threshold !== null && r.score < threshold ? "below_rerank_threshold"
       : purpose === "answer" && r.c.entry.kind === "impression" ? "impression_not_evidence"
       : factKey && facts.has(factKey) ? "duplicate_fact"
       : texts.has(textKey) ? "duplicate_content"

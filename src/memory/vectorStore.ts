@@ -166,6 +166,8 @@ function memoryRecordToApiRecord(record: MemoryRecord): MemoryApiRecord {
     confidence: record.confidence,
     status: record.status,
     pinned: Boolean(record.pinned),
+    authored_by: record.authored_by ?? null,
+    ...(record.provenance ? {provenance: JSON.parse(record.provenance)} : {}),
     tags: parseStringArray(record.tags),
     source: record.source,
     source_message_ids: parseStringArray(record.source_message_ids),
@@ -206,8 +208,8 @@ async function insertMemoryRecord(env: Env, record: MemoryRecord): Promise<void>
     .prepare(
       `INSERT INTO memories (
         id, namespace, type, content, summary, importance, confidence, status,
-        pinned, tags, source, source_message_ids, vector_id, created_at, updated_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        pinned, tags, source, source_message_ids, vector_id, created_at, updated_at, expires_at, provenance
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .bind(
       record.id,
@@ -225,7 +227,7 @@ async function insertMemoryRecord(env: Env, record: MemoryRecord): Promise<void>
       record.vector_id,
       record.created_at,
       record.updated_at,
-      record.expires_at
+      record.expires_at, record.provenance ?? null
     );
 
   if (!isLifecycleEnabled(env)) {
@@ -296,7 +298,7 @@ async function updateMemoryRecord(env: Env, record: MemoryRecord): Promise<Memor
       `UPDATE memories SET
         type = ?, content = ?, summary = ?, importance = ?, confidence = ?, status = ?,
         pinned = ?, tags = ?, source = ?, source_message_ids = ?, vector_id = ?,
-        updated_at = ?, expires_at = ?
+        provenance = CASE WHEN content != ? THEN NULL ELSE provenance END, updated_at = ?, expires_at = ?
        WHERE namespace = ? AND id = ?`
     )
     .bind(
@@ -311,6 +313,7 @@ async function updateMemoryRecord(env: Env, record: MemoryRecord): Promise<Memor
       record.source,
       record.source_message_ids,
       record.vector_id,
+      record.content,
       record.updated_at,
       record.expires_at,
       record.namespace,
@@ -338,7 +341,7 @@ async function markMemoryRecordDeleted(env: Env, input: { namespace: string; id:
   await deleteFtsRow(env.DB, "memory_fts", "memory_id", input.id);
 }
 
-export async function createVectorMemory(env: Env, input: VectorMemoryInput): Promise<MemoryApiRecord> {
+export async function createVectorMemory(env: Env, input: VectorMemoryInput & { provenance?: import("./provenance").MemoryProvenance }): Promise<MemoryApiRecord> {
   const content = input.content.trim();
   if (!content) throw new Error("content is required");
 
@@ -367,6 +370,7 @@ export async function createVectorMemory(env: Env, input: VectorMemoryInput): Pr
   };
 
   const record = toMemoryRecord(normalized);
+  record.provenance = JSON.stringify(input.provenance) ?? null;
   await insertMemoryRecord(env, record);
 
   try {
