@@ -110,9 +110,13 @@ export async function saveRollingDraft(db: D1Database, claim: RollingClaim, draf
   return Boolean(saved.meta.changes);
 }
 
+function draftIds(claim: RollingClaim): string[] {
+  return claim.progress.completed.map(part => `evt_${claim.key}_draft_${part}`);
+}
+
 export async function loadRollingDrafts(db: D1Database, claim: RollingClaim): Promise<RollingDraft[]> {
-  if (!claim.progress.completed.length) return [];
-  const ids = claim.progress.completed.map(part => `evt_${claim.key}_draft_${part}`);
+  const ids = draftIds(claim);
+  if (!ids.length) return [];
   const rows = await db.prepare(`SELECT payload_json FROM memory_events WHERE namespace=? AND event_type='rolling_draft'
     AND id IN (SELECT value FROM json_each(?))`).bind(claim.namespace, JSON.stringify(ids)).all<{ payload_json: string }>();
   if (rows.results.length !== ids.length) throw new Error("Rolling drafts missing");
@@ -123,6 +127,7 @@ export async function finishRollingWindow(db: D1Database, claim: RollingClaim, e
   const col = laneColumns[claim.lane];
   const at = nowIso();
   const owned = guard(claim, claim.at, state);
+  const settled = guard(claim, claim.at, undefined, at);
   const [, finished] = await db.batch([
     audit(db, claim, `evt_${claim.key}`, "rolling_window", {
       window_key: claim.key,
@@ -141,8 +146,8 @@ export async function finishRollingWindow(db: D1Database, claim: RollingClaim, e
       .bind(at, error ?? null, claim.namespace, claim.key, claim.at, ...owned.args),
     ...(state ? [writeState(db, state, at, guard(claim, claim.at, state, at))] : []),
     ...(claim.lane === "on" && claim.progress.completed.length ? [db.prepare(`DELETE FROM memory_events
-      WHERE namespace=? AND event_type='rolling_draft' AND id GLOB ? AND ${guard(claim, claim.at, undefined, at).sql}`)
-      .bind(claim.namespace, `evt_${claim.key}_draft_*`, ...guard(claim, claim.at, undefined, at).args)] : [])
+      WHERE namespace=? AND event_type='rolling_draft' AND id IN (SELECT value FROM json_each(?)) AND ${settled.sql}`)
+      .bind(claim.namespace, JSON.stringify(draftIds(claim)), ...settled.args)] : [])
   ]);
   return Boolean(finished.meta.changes);
 }
