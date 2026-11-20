@@ -1,12 +1,13 @@
-import type { Env } from "../../types";
+import type { Env, MessageRecord } from "../../types";
 import { isExplicitDecisionText } from "../currentState/decisionCues";
 import { DreamModelTimeoutError } from "../dream/modelCall";
 import { groundWindowProposal } from "./apply";
-import { finishRollingWindow, releaseInterruptedWindow, saveRollingProgress, saveShadowPart } from "./checkpoint";
+import { finishRollingWindow, releaseInterruptedWindow, saveRollingDraft, saveRollingProgress, saveShadowPart } from "./checkpoint";
 import { dreamWindowExtractor, type WindowExtractor } from "./extract";
 import { claimRollingWindow, type RollingClaim } from "./inbox";
+import { commitRollingDrafts } from "./live";
 import { rollingExplicitWrites, rollingRecallHits, type RollingPacket } from "./payload";
-import { activeRollingLane, rollingMode, rollingSettings } from "./settings";
+import { activeRollingLane, rollingSettings, type RollingLane } from "./settings";
 import { applyStateDelta, loadRollingState } from "./state";
 import { needsExtraction, type WindowTriage } from "./triage";
 import { clefTriage } from "./triage/clef";
@@ -77,7 +78,10 @@ async function processParts(env: Env, claim: RollingClaim, packet: RollingPacket
     progress.eventCount += count;
     progress.completed.push(partKey);
     try {
-      if (!await saveShadowPart(env.DB, claim, index, grounded, { ...snapshot, state })) {
+      const saved = lane === "shadow"
+        ? await saveShadowPart(env.DB, claim, index, grounded, { ...snapshot, state })
+        : await saveRollingDraft(env.DB, claim, { part: index, grounded, recall_ids: packet.recall_hits.map(hit => hit.id) });
+      if (!saved) {
         throw new RollingStageError("lease_changed");
       }
     } catch (error) {
@@ -94,17 +98,28 @@ export async function runRollingWindow(
   adapters: RollingAdapters = {}
 ): Promise<RollingRunResult> {
   const lane = activeRollingLane(env);
-  if (!lane) return { ran: false, extracted: false, reason: rollingMode(env) === "off" ? "off" : "on_mode_pending" };
-  const { claim, retryAfter } = await claimRollingWindow(env, namespace, lane);
+  if (!lane) return { ran: false, extracted: false, reason: "off" };
+  return runLane(env, namespace, lane, adapters);
+}
+
+async function runLane(env: Env, namespace: string, lane: RollingLane, adapters: RollingAdapters, resumeKey?: string): Promise<RollingRunResult> {
+  const { claim, retryAfter } = await claimRollingWindow(env, namespace, lane, resumeKey);
   if (!claim) return { ran: false, extracted: false, reason: retryAfter ? "busy" : "no_window", retryAfter };
   const { key, attempts, progress } = claim;
   const maxAttempts = rollingSettings(env).maxAttempts;
   try {
     if (attempts > maxAttempts) throw new RollingStageError("attempts_exhausted");
-    const packet = await preparePacket(env, claim, adapters);
-    if (!packet) throw new RollingStageError("lease_changed");
-    await processParts(env, claim, packet, adapters.extractor ?? dreamWindowExtractor(env, namespace, progress.model));
-    if (!await finishRollingWindow(env.DB, claim)) throw new RollingStageError("lease_changed");
+    if (!progress.committing) {
+      const packet = await preparePacket(env, claim, adapters);
+      if (!packet) throw new RollingStageError("lease_changed");
+      await processParts(env, claim, packet, adapters.extractor ?? dreamWindowExtractor(env, namespace, progress.model));
+      if (lane === "on" && progress.extract) {
+        progress.committing = true;
+        if (!await saveRollingProgress(env.DB, claim)) throw new RollingStageError("lease_changed");
+      }
+    }
+    const finished = progress.committing ? await commitRollingDrafts(env, claim) : await finishRollingWindow(env.DB, claim);
+    if (!finished) throw new RollingStageError("lease_changed");
     return { ran: true, windowKey: key, extracted: progress.extract === true };
   } catch (error) {
     const reason = error instanceof RollingStageError ? error.message
@@ -119,4 +134,15 @@ export async function runRollingWindow(
       ...(released ? { retryAfter: Math.min(60, 2 ** attempts) } : {})
     };
   }
+}
+
+/** Nightly reconciles a previously started live commit before taking unfinished messages. */
+export async function recoverRollingCommit(env: Env, namespace: string, messages: MessageRecord[]): Promise<boolean> {
+  const row = await env.DB.prepare(`SELECT window_key FROM rolling_inbox
+    WHERE namespace=? AND done_at IS NULL AND window_key GLOB 'rolling_*'
+      AND json_extract(progress,'$.committing')=1 AND message_id IN (SELECT value FROM json_each(?))
+    LIMIT 1`).bind(namespace, JSON.stringify(messages.map(message => message.id))).first<{ window_key: string }>();
+  if (!row) return false;
+  const result = await runLane(env, namespace, "on", {}, row.window_key);
+  return result.ran;
 }

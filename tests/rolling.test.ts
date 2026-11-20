@@ -338,13 +338,13 @@ test("a short rolling lease cannot cut off an in-progress nightly batch", async 
   insertLine(sqlite, "two", "Second line.");
   const rows = sqlite.prepare("SELECT * FROM messages ORDER BY id").all() as unknown as MessageRecord[];
   const claim = await claimNightlyExtraction(env, "default", rows, { dateLabel: SYNTHETIC_DAY, dreamRunId: "first" }, false);
-  assert.equal(claim.held, true);
+  assert.equal(claim.leasedIds.length, 2);
   sqlite.prepare("UPDATE rolling_inbox SET claimed_at=?").run(new Date(Date.now() - 5 * 60_000).toISOString());
   const other = { dateLabel: SYNTHETIC_DAY, dreamRunId: "other" };
   assert.equal((await claimNightlyExtraction(env, "default", rows, other, false)).blocked, true);
   assert.equal((await claimRollingWindow(env, "default", "on")).claim, undefined);
   sqlite.exec("UPDATE rolling_inbox SET claimed_at='2000-01-01T00:00:00.000Z'");
-  assert.equal((await claimNightlyExtraction(env, "default", rows, other, false)).held, true);
+  assert.equal((await claimNightlyExtraction(env, "default", rows, other, false)).leasedIds.length, 2);
 });
 
 test("A3 settings and existing Dream endpoints report modes, retry failures, and comparisons", async (t) => {
@@ -354,8 +354,8 @@ test("A3 settings and existing Dream endpoints report modes, retry failures, and
   insertLine(sqlite, "b", "Second.");
   await runRollingWindow(env, "default", { triage: { async classify() { return null; } } });
   assert.deepEqual(validateSettings({ ROLLING_DREAM: "shadow" }), { ROLLING_DREAM: "shadow" });
-  assert.throws(() => validateSettings({ ROLLING_DREAM: "invalid" }), /off, shadow/);
-  assert.throws(() => validateSettings({ ROLLING_DREAM: "on" }), /off, shadow$/);
+  assert.deepEqual(validateSettings({ ROLLING_DREAM: "on" }), { ROLLING_DREAM: "on" });
+  assert.throws(() => validateSettings({ ROLLING_DREAM: "invalid" }), /off, shadow, on/);
   assert.match(ADMIN_HTML, /settingOption\(item\)/);
   assert.match(ADMIN_HTML, /What rolling would write/);
   const req = (path: string) => new Request(`https://synthetic.invalid${path}`, { headers: { authorization: "Bearer synthetic-secret" } });

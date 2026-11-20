@@ -19,7 +19,8 @@ export async function applyScopedDecision(
   env: Env,
   namespace: string,
   candidate: ExtractedMemory,
-  contextIds: string[] = []
+  contextIds: string[] = [],
+  options?: { guard?: D1PreparedStatement; rollingMessages?: string[] }
 ) {
   const proposal = candidate.decision;
   const key = proposal && decisionKey(proposal.scope_key);
@@ -61,7 +62,8 @@ export async function applyScopedDecision(
         .all<{ id: string }>()
     : null;
   const origin = {
-    ...dreamOrigin(ids),
+    ...dreamOrigin(ids, options?.rollingMessages ? { messages: options.rollingMessages, memories: contextIds } : {}),
+    ...(options?.rollingMessages ? { recording_actor: "rolling_dream" } : {}),
     attributed_actor: "user" as const,
     evidence_relation: "paraphrase" as const,
     state_of: sameSpace?.results.map((row) => row.id) ?? []
@@ -126,7 +128,7 @@ export async function applyScopedDecision(
       validAsOf: at,
       sourceMessageIds: ids,
       provenance: origin
-    });
+    }, options?.guard);
     return { id: revisionId, current: false };
   }
 
@@ -141,6 +143,6 @@ export async function applyScopedDecision(
     confidence: candidate.confidence,
     importance: candidate.importance,
     previous: current ? { id: current.id, updatedAt: current.updated_at, vectorId: current.vector_id } : null
-  });
+  }, options?.guard);
   return { id, current: true };
 }

@@ -100,9 +100,8 @@ export const SETTINGS: SettingSpec[] = [
         value: "on",
         label: "开启 (on)",
         labelEn: "On",
-        hint: "写入模式将在下一阶段启用。",
-        hintEn: "Writing is available in the next stage.",
-        disabled: true
+        hint: "按窗口增量整理并写入候选或明确决定，夜间接手剩余消息，日记照常读全天。",
+        hintEn: "Commit rolling outputs and let nightly Dream handle remaining messages. The journal reads the full day."
       }
     ]
   },

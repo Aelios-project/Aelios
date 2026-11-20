@@ -33,7 +33,7 @@ export async function applyDreamV2(
     messageIds: string[];
     contextMemoryIds?: string[];
     extracted: ExtractedMemory[];
-    requireCommit?: boolean;
+    guard?: D1PreparedStatement;
     writeDailyDraft?: boolean;
   }
 ): Promise<{
@@ -57,7 +57,7 @@ export async function applyDreamV2(
     queuedCandidates += await queueDreamExtractedMemories(env, {
       namespace,
       memories: extracted, digestDecisions: digest.decisions, contextIds: input.contextMemoryIds,
-      messageIds, requireCommit: input.requireCommit
+      messageIds, guard: input.guard
     });
     await recordDreamReviewProposal(env, { namespace, dateLabel, digest, messageIds });
     return { added: 0, updated: 0, deleted: 0, queuedCandidates, longtail: 0, errors: [] };
@@ -66,7 +66,7 @@ export async function applyDreamV2(
   queuedCandidates += await queueDreamExtractedMemories(env, {
     namespace,
     memories: extracted, digestDecisions: digest.decisions, contextIds: input.contextMemoryIds,
-    messageIds, requireCommit: input.requireCommit
+    messageIds, guard: input.guard
   });
 
   for (const item of digest.memories_to_add ?? []) {
@@ -84,7 +84,7 @@ export async function applyDreamV2(
         sourceMessageIds: evidence(item.source_message_ids),
         provenance: origin(item.source_message_ids),
         source: "dream_add"
-      });
+      }, input.guard);
       queuedCandidates += 1;
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -145,7 +145,7 @@ export async function applyDreamV2(
         provenance: origin(item.source_message_ids, item.target_id),
         source: "dream_update",
         targetMemoryId: item.target_id
-      });
+      }, input.guard);
       queuedCandidates += 1;
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -172,7 +172,7 @@ export async function applyDreamV2(
         source: "dream_delete",
         targetMemoryId: item.target_id,
         decisionNote: item.reason ?? "dream_delete"
-      });
+      }, input.guard);
       queuedCandidates += 1;
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -206,7 +206,7 @@ export async function runLifecyclePhase(
     messageIds: string[];
     contextMemoryIds?: string[];
     extracted: ExtractedMemory[];
-    requireCommit?: boolean;
+    guard?: D1PreparedStatement;
     writeDailyDraft?: boolean;
   }
 ): Promise<Awaited<ReturnType<typeof applyDreamV2>>> {

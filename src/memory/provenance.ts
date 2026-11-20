@@ -15,6 +15,8 @@ export interface MemoryProvenance {
   context_refs?: string[];
   candidate_id?: string;
   state_of?: string[];
+  episode_key?: string;
+  episode_date?: string;
 }
 
 export function explicitWrite(

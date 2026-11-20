@@ -39,7 +39,9 @@ import {
 } from "./helpers";
 import { buildDreamRoutingPlan, runJudgePhase } from "./judgePhase";
 import { runLifecyclePhase } from "./lifecyclePhase";
-import { claimNightlyExtraction, listNightlyInboxBacklog, markNightlyExtracted, releaseNightlyExtraction } from "../rolling/nightly";
+import { claimNightlyExtraction, hasLiveCoverage, listNightlyInboxBacklog, markNightlyExtracted, refreshNightlyClaim, releaseNightlyExtraction } from "../rolling/nightly";
+import { recoverRollingCommit } from "../rolling/runner";
+import { scheduleRollingWindow } from "../rolling/inbox";
 
 // Re-export date/env surface so external importers of dailyDigest keep working.
 export {
@@ -159,7 +161,10 @@ async function performDailyMemoryDigest(
     });
     return { ran: false, mode: "dream", date: dateLabel, reason: cursorState.done ? "already_done" : "no_messages", startIso, endIso, cursor };
   }
-  const claim = dryRun ? null : await claimNightlyExtraction(env, namespace, fetchedMessages, run, options.force === true);
+  let claim = dryRun ? null : await claimNightlyExtraction(env, namespace, fetchedMessages, run, options.force === true);
+  if (claim?.blocked && await recoverRollingCommit(env, namespace, fetchedMessages)) {
+    claim = await claimNightlyExtraction(env, namespace, fetchedMessages, run, options.force === true);
+  }
   if (claim?.blocked) {
     await safeFinishDreamRun(env.DB, { id: dreamRunId, status: "skipped", reason: "inbox_claimed" });
     return { ran: false, mode: "dream", date: dateLabel, reason: "inbox_claimed", startIso, endIso, cursor };
@@ -170,6 +175,9 @@ async function performDailyMemoryDigest(
     });
   } finally {
     await releaseNightlyExtraction(env.DB, namespace, claim);
+    if (claim?.leasedIds.length) await scheduleRollingWindow(env, namespace).catch(() =>
+      console.warn("dream: rolling window could not be scheduled after nightly extraction", { namespace })
+    );
   }
 }
 
@@ -359,8 +367,8 @@ async function processDailyDigestBatch(
     messageIds,
     extracted: extractedMemories,
     contextMemoryIds: existingMemories.filter(m => m.namespace === namespace).map(m => m.id),
-    requireCommit: claim?.held,
-    writeDailyDraft: !lateBatch
+    guard: await refreshNightlyClaim(env.DB, namespace, claim, messageIds),
+    writeDailyDraft: !lateBatch && (strategy === "review" || !await hasLiveCoverage(env.DB, namespace, startIso, endIso))
   }) : { added: 0, updated: 0, deleted: 0, queuedCandidates: 0, errors: [] };
   await markNightlyExtracted(env.DB, namespace, claim, messageIds);
   const pending = hasMore || (await listNightlyInboxBacklog(env.DB, namespace, startIso, endIso, 1)).length > 0;

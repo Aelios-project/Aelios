@@ -102,6 +102,7 @@ export function parseWindowProposal(text: string): WindowProposal | null {
     const event = normalizeEvent(item);
     return event ? [event] : [];
   });
+  if (raw.events.length && !events.length) return null;
   return { events, state_delta: normalizeStateDelta(raw.state_delta) };
 }
 
@@ -138,7 +139,9 @@ export function dreamWindowExtractor(
         stream: false,
       });
       if (!response.ok) return null;
-      const message = response.parsed?.choices?.[0]?.message as { content?: unknown; reasoning_content?: unknown } | undefined;
+      const choice = response.parsed?.choices?.[0];
+      if (choice?.finish_reason === "length") return null;
+      const message = choice?.message;
       const content = typeof message?.content === "string" ? message.content : "";
       const reasoning = typeof message?.reasoning_content === "string" ? message.reasoning_content : "";
       return parseWindowProposal(content || reasoning);

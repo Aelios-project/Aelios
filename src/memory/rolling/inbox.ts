@@ -9,6 +9,7 @@ import type { TriageAnswers } from "./triage";
 import { codePointLength, pickWindow, type InboxMessage } from "./window";
 
 const STAGE_VERSION = "rolling-v1";
+const MAX_QUEUE_DELAY_SECONDS = 86_400;
 
 export const laneColumns = {
   on: { key: "window_key", at: "claimed_at", attempts: "attempts", progress: "progress", done: "done_at", error: "error" },
@@ -25,6 +26,7 @@ interface WindowProgress {
   clefCalls: number;
   extractorCalls: number;
   eventCount: number;
+  committing?: boolean;
 }
 
 export interface RollingClaim {
@@ -104,7 +106,7 @@ export async function scheduleRollingWindow(env: Env, namespace: string): Promis
 
 export async function enqueueRollingWindow(env: Env, namespace: string, delaySeconds?: number): Promise<void> {
   const job: RollingWindowQueueMessage = { type: "rolling_window", namespace };
-  await env.MEMORY_QUEUE?.send(job, delaySeconds ? { delaySeconds } : undefined);
+  await env.MEMORY_QUEUE?.send(job, delaySeconds ? { delaySeconds: Math.min(delaySeconds, MAX_QUEUE_DELAY_SECONDS) } : undefined);
 }
 
 export function scheduleRollingAfterRequest(env: Env, ctx: ExecutionContext, namespace: string): void {
@@ -153,7 +155,7 @@ async function pendingHeads(env: Env, namespace: string, lane: RollingLane): Pro
   }
 }
 
-export async function claimRollingWindow(env: Env, namespace: string, lane: RollingLane): Promise<{
+export async function claimRollingWindow(env: Env, namespace: string, lane: RollingLane, resumeKey?: string): Promise<{
   claim?: RollingClaim;
   retryAfter?: number;
 }> {
@@ -161,6 +163,7 @@ export async function claimRollingWindow(env: Env, namespace: string, lane: Roll
   const before = staleClaimBefore(env);
   const at = nowIso();
   const existing = await existingWindow(env, namespace, lane);
+  if (resumeKey && existing?.key !== resumeKey) return {};
   if (existing?.at && existing.at >= before) {
     const until = Date.parse(existing.at) + rollingSettings(env).claimTtlMinutes * 60_000;
     return { retryAfter: Math.max(1, Math.ceil((until - Date.now()) / 1000) + 1) };

@@ -14,7 +14,7 @@ export async function handleQueueMessage(message: QueueMessage, env: Env, redeli
     case "rolling_window": {
       const result = await runRollingWindow(env, message.namespace);
       if (result.retryAfter && (result.ran || redelivered)) {
-        await enqueueRollingWindow(env, message.namespace, Math.min(result.retryAfter, 43_200));
+        await enqueueRollingWindow(env, message.namespace, result.retryAfter);
       } else if (result.ran) {
         await scheduleRollingWindow(env, message.namespace);
       }

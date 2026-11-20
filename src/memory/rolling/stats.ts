@@ -55,12 +55,18 @@ async function listRollingShadowEvents(db: D1Database, { namespace, startIso, en
       AND json_extract(e.payload_json,'$.start_at')<?3
       AND json_extract(e.payload_json,'$.end_at')>=?2
     ORDER BY e.created_at,e.id LIMIT 200`).bind(namespace, startIso, endIso).all<{ id: string; payload_json: string }>();
-  return rows.results.flatMap(row => {
+  const items = rows.results.flatMap(row => {
     const payload = JSON.parse(row.payload_json) as { events: GroundedWindowEvent[]; window_key: string };
     return payload.events.filter(event => event.op !== "no_op").map((event, index) => ({
       id: `${row.id}:${index}`, window_key: payload.window_key, ...event
     }));
   });
+  const sources = [...new Set(items.flatMap(item => item.source_message_ids))];
+  if (!sources.length) return [];
+  const retained = await db.prepare(`SELECT id FROM messages WHERE namespace=? AND id IN (SELECT value FROM json_each(?))`)
+    .bind(namespace, JSON.stringify(sources)).all<{ id: string }>();
+  const retainedIds = new Set(retained.results.map(row => row.id));
+  return items.filter(item => item.source_message_ids.every(id => retainedIds.has(id)));
 }
 
 async function listNightlyOutputs(db: D1Database, { namespace, startIso, endIso }: DateRange) {
