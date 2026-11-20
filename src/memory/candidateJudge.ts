@@ -125,7 +125,7 @@ async function targetsExplicitWrite(db: D1Database, namespace: string, candidate
   const id = candidate.target_memory_id ?? (candidate.fact_key
     ? (await getActiveMemoryByFactKey(db, {namespace, factKey: candidate.fact_key}))?.id : null);
   const row = id ? await getMemoryById(db, {namespace, id}) : null;
-  return row ? isExplicitMemory(row) : false;
+  return row ? isExplicitMemory(row) || row.source === "scoped_decision" : false;
 }
 
 // approve 保留 supersede 历史：有明确 target 就更新该记忆；否则有 fact_key 先查 active 同 key，

@@ -54,6 +54,7 @@ export interface Env {
   TRIGGER_BUILD_MODEL?: string;
   ENABLE_DAILY_MEMORY_DIGEST?: string;
   DREAM_NAMESPACE?: string;
+  CURRENT_STATE_PROJECTION?: string;
   DREAM_MAX_MESSAGES?: string;
   DREAM_MAX_RUNS?: string;
   DREAM_MAX_TOKENS?: string;

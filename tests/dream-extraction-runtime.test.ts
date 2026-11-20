@@ -352,3 +352,28 @@ test("Dream grounds speaker and modality in the supplied batch; tool arguments a
   );
   assert.deepEqual((await run([])).memories, []);
 });
+
+test("nightly digest lands a cited scoped decision with only the supplied state_of targets", async (t) => {
+  const rows = messages(1);
+  rows[0].content = "我决定就用 ACP。";
+  const proposed = {
+    type: "decision", content: "用户决定 Aelios 接入采用 ACP。", attributed_role: "user",
+    evidence_quote: rows[0].content, source_message_ids: [rows[0].id],
+    decision: { scope_key: "user/aelios/integration", value: "ACP", state_of: ["old", "not-shown"] },
+  };
+  const { env, sqlite } = fixture(t, input => ({ response: JSON.stringify(isDigest(input)
+    ? { ...DIGEST, decisions: [proposed] } : { memories: [] }) }));
+  env.CURRENT_STATE_PROJECTION = "on";
+  seedMessages(sqlite, rows);
+  sqlite.prepare("INSERT INTO memories(id,namespace,type,content,status,created_at,updated_at) VALUES('old','default','note','old','active','2026-09-17','2026-09-17')").run();
+  const result = await runDailyMemoryDigest(env, "default", { dateLabel: DATE });
+  assert.equal(result.ran, true);
+  const saved = sqlite.prepare("SELECT * FROM memories WHERE source='scoped_decision'").get();
+  assert.ok(saved);
+  assert.equal(saved.fact_key, "decision:user/aelios/integration");
+  assert.deepEqual(JSON.parse(String(saved.provenance)).state_of, ["old"]);
+  assert.deepEqual(JSON.parse(String(saved.source_message_ids)), [rows[0].id]);
+  const lifecycle = sqlite.prepare("SELECT valid_as_of FROM memory_lifecycle WHERE memory_id=?").get(saved.id);
+  assert.ok(lifecycle);
+  assert.equal(lifecycle.valid_as_of, rows[0].created_at);
+});

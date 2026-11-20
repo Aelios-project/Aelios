@@ -19,6 +19,7 @@ export interface SurfaceEntry {
   eventDate?: string | null;
   factKey?: string | null;
   speaker?: string;
+  currentState?: import("./currentState/projection").CurrentState;
 }
 
 export interface SurfaceOptions {

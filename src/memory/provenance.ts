@@ -14,6 +14,7 @@ export interface MemoryProvenance {
   inputs?: string[];
   context_refs?: string[];
   candidate_id?: string;
+  state_of?: string[];
 }
 
 export function explicitWrite(

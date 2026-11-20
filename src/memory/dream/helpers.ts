@@ -1,3 +1,4 @@
+import { readScopedDecision } from "../currentState/scopeKey";
 import { isExplicitMemory } from "../provenance";
 import { finishDreamRun, insertDreamRun } from "../../db/dreamRuns";
 import type { DreamRunTrigger } from "../../db/dreamRuns";
@@ -46,6 +47,7 @@ export interface DigestMemoryDelete {
 }
 
 export interface DailyDigestResult {
+  decisions?: ExtractedMemory[];
   source_message_ids?: string[];
   date?: string;
   title?: string;
@@ -206,7 +208,15 @@ export function normalizeDigestResult(value: unknown): DailyDigestResult {
       })
     : undefined;
 
+  const decisions = Array.isArray(raw.decisions) ? raw.decisions.flatMap(item => {
+    const normalized = normalizeExtractedMemory(item);
+    const record = item as Record<string,unknown> | null;
+    const decision = readScopedDecision(record?.decision);
+    if (!decision || !normalized || !record || record.attributed_role !== "user") return [];
+    return [{...normalized, decision, attributed_role:"user" as const,evidence_quote:readString(record.evidence_quote) ?? undefined}];
+  }) : undefined;
   return {
+    ...(decisions ? {decisions} : {}),
     source_message_ids: readStringArray(raw.source_message_ids),
     date: readString(raw.date) ?? undefined,
     title: readString(raw.title) ?? undefined,

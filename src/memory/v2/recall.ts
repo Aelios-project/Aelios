@@ -31,6 +31,7 @@ import { filterAndCompressMemories } from "../filter";
 import { createEmbedding } from "../embedding";
 import { getMessagesByIds } from "../../db/messages";
 import { searchQuotes } from "../quotes";
+import { annotateCurrentState, type CurrentState } from "../currentState/projection";
 import { readRecallIntent } from "../recallIntent";
 import type { MemoryProvenance } from "../provenance";
 import { shapeRecallQuery } from "../queryShape";
@@ -338,6 +339,7 @@ export interface RecallInput {
 }
 
 export interface RecallHit {
+  current_state?: CurrentState;
   revision_of?: string;
   provenance?: Omit<MemoryProvenance, "inputs" | "context_refs" | "candidate_id">;
   version_status?: string | null;
@@ -584,7 +586,7 @@ export async function runRecall(env: Env, input: RecallInput): Promise<RecallRes
   const beforeFloor = [...afterRelation, ...longtailHits]
     .sort((a, b) => b.score - a.score);
   const flooredIds: string[] = [];
-  const allHits = beforeFloor
+  const rankedHits = beforeFloor
     .filter((hit) => {
       // Nomination pools stay wide for the later reranker. Explicit search
       // still drops scores that only cleared the padded lexical floor.
@@ -594,6 +596,7 @@ export async function runRecall(env: Env, input: RecallInput): Promise<RecallRes
       return false;
     })
     .slice(0, k);
+  const allHits = await annotateCurrentState(env, input.namespace, rankedHits, query, history === true, k);
 
   // 6. 记 last_injected_at (闸三记账)。
   //    只记实际注入的 (通过闸二没有被剔除的); 珍贵的归 boot 不在这里记。

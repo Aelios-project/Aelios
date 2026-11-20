@@ -2,6 +2,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { runRecall } from "../src/memory/v2/recall.ts";
+import { annotateCurrentState } from "../src/memory/currentState/projection.ts";
 
 const sqlite = new DatabaseSync(":memory:");
 for (const file of readdirSync("migrations").sort()) sqlite.exec(readFileSync(`migrations/${file}`, "utf8"));
@@ -143,4 +144,50 @@ console.log(
     embeds,
   }),
 );
+
+let projectionModelCalls = 0;
+const projectionEnv = {
+  DB: db,
+  CURRENT_STATE_PROJECTION: "on",
+  AI: { async run() { projectionModelCalls++; } },
+};
+const linkedHit = {
+  id: "writer",
+  content: corpus.find(([id]) => id === "writer")[1],
+  type: "note",
+  source: "mcp",
+  kind: "memory",
+  source_layer: "memory",
+  backed: true,
+  score: 0.8,
+  recorded_date: "2026-01-01",
+};
+const projectionLatencies = { off: [], linked: [], unrelated: [] };
+for (let iteration = 0; iteration < 120; iteration++) {
+  for (const [mode, hits, query] of [
+    ["off", [linkedHit], "ACP planning now"],
+    ["linked", [linkedHit], "ACP planning now"],
+    ["unrelated", [{ ...linkedHit, id: "unrelated" }], "ACP planning now"],
+  ]) {
+    const start = performance.now();
+    await annotateCurrentState(
+      { ...projectionEnv, CURRENT_STATE_PROJECTION: mode === "off" ? "off" : "on" },
+      "bench",
+      hits.map((hit) => ({ ...hit })),
+      query,
+      false,
+      5,
+    );
+    if (iteration >= 20) projectionLatencies[mode].push(performance.now() - start);
+  }
+}
+console.log(JSON.stringify({
+  projection: {
+    samples: projectionLatencies.off.length,
+    off: latency(projectionLatencies.off),
+    linked: latency(projectionLatencies.linked),
+    unrelated: latency(projectionLatencies.unrelated),
+    modelCalls: projectionModelCalls,
+  },
+}));
 sqlite.close();

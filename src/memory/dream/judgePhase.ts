@@ -1,3 +1,5 @@
+import { applyScopedDecision } from "../currentState/apply";
+import { isCurrentStateEnabled } from "../currentState/projection";
 import { createMemoryCandidate } from "../../db/v2";
 import type { Env } from "../../types";
 import { newId } from "../../utils/ids";
@@ -77,10 +79,16 @@ export async function recordDreamReviewProposal(
 
 export async function queueDreamExtractedMemories(
   env: Env,
-  input: { namespace: string; memories: ExtractedMemory[]; messageIds: string[] }
+  input: { namespace: string; memories: ExtractedMemory[]; messageIds: string[]; digestDecisions?: ExtractedMemory[]; contextIds?: string[] }
 ): Promise<number> {
   let queued = 0;
-  for (const memory of input.memories) {
+  const project = isCurrentStateEnabled(env);
+  const digestDecisions = project ? input.digestDecisions ?? [] : [];
+  for (const memory of [...digestDecisions, ...input.memories.filter(memory => !digestDecisions.includes(memory))]) {
+    if (project && memory.decision && memory.source_message_ids.every(id => input.messageIds.includes(id))) {
+      if (await applyScopedDecision(env, input.namespace, memory, digestDecisions.includes(memory) ? input.contextIds : [])) continue;
+    }
+    if (digestDecisions.includes(memory) && !memory.evidence_quote) continue;
     try {
       let targetMemoryId: string | null = null;
       let decisionNote: string | null = null;
@@ -97,7 +105,7 @@ export async function queueDreamExtractedMemories(
         namespace: input.namespace,
         type: memory.type,
         content: memory.content,
-        factKey: memory.fact_key ?? null,
+        factKey: project && memory.decision ? null : memory.fact_key ?? null,
         confidence: memory.confidence,
         importance: memory.importance,
         tags: memory.tags,

@@ -3420,12 +3420,13 @@ function memoryAdmin() {
       }
     },
     async deleteMemory(memory) {
-      if (!window.confirm(this.L('确认移除这条记忆？', 'Remove this memory?'))) return;
+      if (!window.confirm(this.L('移除这条记忆？引用它的已知衍生记忆也会撤回。', 'Remove this memory and withdraw known memories derived from it?'))) return;
       try {
-        await this.request(this.withNamespace('/v1/memory/' + encodeURIComponent(memory.id)), { method: 'DELETE' });
+        const {data} = await this.request(this.withNamespace('/v1/memory/' + encodeURIComponent(memory.id)), { method: 'DELETE' });
         await Promise.all([this.loadMemories(), this.loadBoot()]);
         if (this.page === 'memory' && this.moreView === 'world') await this.loadWorldFacts();
-        this.notify(this.L('已移除', 'Removed'));
+        const count = (data.withdrawn_memories || []).length;
+        this.notify(this.L('已移除，连带撤回 ' + count + ' 条记忆', 'Removed. Related memories withdrawn: ' + count));
       } catch (error) {
         this.notify(error.message);
       }

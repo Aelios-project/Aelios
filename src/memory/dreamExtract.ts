@@ -1,3 +1,5 @@
+import { groundCandidate } from "./grounding";
+import { readScopedDecision } from "./currentState/scopeKey";
 import { listActiveFactKeys, listDailyLogsInRange } from "../db/v2";
 import { loadConfig, speakersForNamespace, type DreamSpeakers } from "../gateway/config";
 import { callDreamModelJson, DreamModelTimeoutError } from "./dream/modelCall";
@@ -63,6 +65,7 @@ function normalizeCandidate(item: unknown): ExtractedMemory | null {
     source_message_ids: readStringArray(raw.source_message_ids),
     attributed_role: raw.attributed_role === "user" || raw.attributed_role === "assistant" ? raw.attributed_role : undefined,
     evidence_quote: readString(raw.evidence_quote) ?? undefined,
+    decision: readScopedDecision(raw.decision),
     fact_key: readString(raw.fact_key) ?? undefined
   };
 }
@@ -85,27 +88,6 @@ function parseExtractModelOutput(text: string): ExtractedMemory[] | null {
     console.warn("dream extract: dropped unusable candidates", { dropped: memories.length - kept.length, kept: kept.length });
   }
   return kept;
-}
-
-// Match against the actual captured batch. A plausible model-generated ID, role or quote alone proves nothing.
-function groundCandidate(memory: ExtractedMemory, messages: MessageRecord[]): ExtractedMemory[] {
-  const ids = new Set(memory.source_message_ids);
-  const cited = messages.filter(m => ids.has(m.id));
-  if (!cited.length) return [];
-  const quote = memory.evidence_quote;
-  const role = memory.attributed_role;
-  const support = cited.filter(m => m.role === role && quote && m.content.includes(quote) &&
-    (role !== "assistant" || (m.capture_kind !== "includes_tool" &&
-      (!m.source?.startsWith("gateway:") || m.capture_kind === "visible"))));
-  if ((role || quote) && (!role || !support.length)) return [];
-  const evidence = support.length ? support : cited;
-  const deciding = memory.type === "decision" || /决定|确定选择|decided|committed to/i.test(memory.content);
-  if (deciding && evidence.every(m =>
-    /[?？]$/.test(m.content.trim()) || /^(?:maybe|perhaps|should I|我在考虑|要不要)/i.test(m.content.trim()))) return [];
-  for (const match of memory.content.matchAll(/「([^」]+)」/g)) {
-    if (!evidence.some(m => m.content.includes(match[1]))) return [];
-  }
-  return [{ ...memory, evidence_quote: undefined, source_message_ids: evidence.map(m => m.id) }];
 }
 
 function formatTranscript(messages: MessageRecord[], speakers: DreamSpeakers | null): string {
@@ -241,7 +223,8 @@ async function callDreamExtractModel(
   existingFactKeys: string[],
   speakers: DreamSpeakers | null,
   background: DiaryBackground[],
-  deadlineAt?: number
+  deadlineAt?: number,
+  decisionInstructions?: string
 ): Promise<DreamExtractModelResult> {
   const model = readDreamExtractModel(env);
   if (!model) return { memories: [], reason: "missing_model" };
@@ -250,7 +233,7 @@ async function callDreamExtractModel(
     model,
     messages: [
       { role: "system", content: "你是严格的 JSON 生成器。你只输出 JSON。" },
-      { role: "user", content: buildDreamExtractPrompt(messages, existingFactKeys, speakers, background) }
+      { role: "user", content: [decisionInstructions, buildDreamExtractPrompt(messages, existingFactKeys, speakers, background)].filter(Boolean).join("\n") }
     ],
     max_tokens: readPositiveInt(env.DREAM_MAX_TOKENS, DEFAULT_DREAM_EXTRACT_MAX_TOKENS, MAX_DREAM_EXTRACT_MAX_TOKENS),
     response_format: { type: "json_object" },
@@ -275,7 +258,9 @@ async function callDreamExtractModel(
       });
       return { memories: [], model, reason: "model_invalid_json", usage, finishReason };
     }
-    const grounded = memories.flatMap(memory => groundCandidate(memory, messages));
+    const grounded = memories.flatMap(memory => groundCandidate(
+      decisionInstructions ? memory : { ...memory, decision: undefined }, messages
+    )).map(memory => memory.decision ? memory : { ...memory, evidence_quote: undefined });
     return { memories: grounded.map(memory => ({ ...memory, context_dates: background.map(day => `${day.date}@${day.updated_at ?? ""}`) })), model, usage, finishReason };
   } catch (error) {
     console.error("dream extract: model failed", { model, error });
@@ -311,6 +296,7 @@ export async function extractDreamMemoriesFromMessages(
     diaryBackground?: boolean;
     /** Internal extraction-phase budget, including batch reduction retries. */
     deadlineAt?: number;
+    decisionInstructions?: string;
   }
 ): Promise<DreamExtractModelResult> {
   const messages = input.messages.filter(message => message.namespace === input.namespace);
@@ -327,5 +313,5 @@ export async function extractDreamMemoriesFromMessages(
   const speakers = input.speakers !== undefined
     ? input.speakers
     : speakersForNamespace(await loadConfig(env), input.namespace);
-  return callDreamExtractModel(env, messages, existingFactKeys, speakers, background, input.deadlineAt);
+  return callDreamExtractModel(env, messages, existingFactKeys, speakers, background, input.deadlineAt, input.decisionInstructions);
 }

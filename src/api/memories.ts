@@ -1210,14 +1210,15 @@ async function handleDeleteMemory(
     const legacy = env.VECTORIZE ? await getVectorMemory(env, id) : null;
     if (!legacy || legacy.namespace !== namespace) return openAiError("Memory not found", 404);
     const deletedLegacyVector = await deleteVectorMemory(env, id);
-    if (deletedLegacyVector) return json({ data: { id, deleted: true, source: "legacy_vectorize" } });
+    if (deletedLegacyVector) return json({ data: { id, deleted: true, source: "legacy_vectorize", withdrawn_memories: [] } });
     return openAiError("Memory not found", 404);
   }
 
-  try { await invalidateKnownInputs(env, { namespace, id }, "memory"); }
+  let report: Awaited<ReturnType<typeof invalidateKnownInputs>>;
+  try { report = await invalidateKnownInputs(env, { namespace, id }, "memory"); }
   catch { return openAiError("Memory cleanup incomplete; retry deletion", 503); }
   await softDeleteMemory(env.DB, { namespace, id });
-  return json({ data: { id: existing.id, vector_id: existing.vector_id, deleted: true } });
+  return json({ data: { id: existing.id, vector_id: existing.vector_id, deleted: true, withdrawn_memories: report?.withdrawn.filter((other) => other !== id) ?? [] } });
 }
 
 async function handleGetMemory(request: Request, env: Env, profile: KeyProfile, id: string): Promise<Response> {

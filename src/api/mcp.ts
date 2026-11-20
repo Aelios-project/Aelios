@@ -8,7 +8,7 @@ import {
   appendNotebookPage,
   archiveMemory,
   createPrecious,
-  deleteMemoryV2,
+  deleteMemoryWithReport,
   deleteNotebookPage,
   fetchMemoryLifecycleRows,
   getActiveMemoryByFactKey,
@@ -924,12 +924,12 @@ async function callTool(
 
     // v2: 硬删 D1 + 向量 (本体和镜像一起删)，找不到返回 false。
     if (isV2Enabled(env)) {
-      const deleted = await deleteMemoryV2(env, {
+      const deleted = await deleteMemoryWithReport(env, {
         namespace: resolveNamespace(profile, args.namespace),
         id
       });
       if (!deleted) return toolError("Memory not found");
-      return textToolResult({ data: { id, deleted: true } });
+      return textToolResult({ data: { id, deleted: true, withdrawn_memories: deleted.withdrawn.filter((other) => other !== id) } });
     }
 
     const legacy = await getVectorMemory(env, id);
