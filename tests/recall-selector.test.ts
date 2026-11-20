@@ -188,7 +188,7 @@ test("evidence shares two slots globally, with only one excerpt from a shared so
 
 test("same source id in unrelated spaces is not evidence of duplication", async () => {
   const i = input("暗号原话", ["我的暗号是月亮。", "我的暗号是太阳。"]);
-  for (const e of i.entries) e.sourceIds = ["local1"];
+  for (const e of i.entries) { e.kind = "quote"; e.speaker = "user"; e.sourceIds = ["local1"]; }
   i.entries[1].namespace = "b";
   assert.equal((await selectRecall(scoreEnv([0.9, 0.8]), i)).entries.length, 2);
 });
@@ -298,4 +298,13 @@ test("archive labels never become evidence and long unbroken conditions are not 
   const result = prepareSelectorCandidates(unsafe);
   assert.equal(result.candidates.length, 0);
   assert.equal(result.decisions[0].reason, "no_safe_window");
+});
+
+test("an unrelated 'quote' keeps memories; asking for exact words keeps only original lines unless switched off", async () => {
+  const note = ["你用 Cloudflare 网关做记忆。"];
+  assert.equal((await selectRecall(rankedEnv, input("Draft a price quote for the Cloudflare 网关 job", note))).entries.length, 1);
+  const exact = await selectRecall(rankedEnv, input("Cloudflare 网关那句原话是什么", note));
+  assert.deepEqual(exact.decisions.map(d => d.reason), ["original_unavailable"]);
+  const off = { ...rankedEnv, RECALL_PROVENANCE_SELECTION: "false" };
+  assert.equal((await selectRecall(off, input("Cloudflare 网关那句原话是什么", note))).entries.length, 1);
 });

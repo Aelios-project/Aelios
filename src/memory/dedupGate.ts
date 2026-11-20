@@ -1,3 +1,4 @@
+import { isExplicitMemory } from "./provenance";
 import { getMemoryById } from "../db/memories";
 import type { Env, MemoryApiRecord } from "../types";
 import { readNumber } from "../utils/request";
@@ -6,6 +7,7 @@ import { searchVectorMemories } from "./vectorStore";
 export interface SimilarHit {
   memory: MemoryApiRecord;
   score: number;
+  explicitlyWritten: boolean;
 }
 
 export async function findSimilarActiveMemory(
@@ -29,7 +31,7 @@ export async function findSimilarActiveMemory(
       const d1Row = await getMemoryById(env.DB, { namespace: input.namespace, id: memory.id });
       if (!d1Row || d1Row.status !== "active" || d1Row.version_status === "superseded") continue;
       if (!best || score > best.score) {
-        best = { memory, score };
+        best = { memory, score, explicitlyWritten: isExplicitMemory(d1Row) };
       }
     }
     return best;

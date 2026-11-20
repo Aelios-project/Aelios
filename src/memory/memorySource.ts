@@ -24,7 +24,7 @@ export type SourceDateMatch = "diary_sources" | "dream_night";
 export type MemorySource =
   | {
       kind: "messages";
-      messages: Array<{ id: string; role: string; created_at: string; content: string }>;
+      messages: Array<{ id: string; role: string; created_at: string; content: string; truncated?: boolean; capture_kind?: string }>;
       missing: number;
     }
   | {
@@ -128,6 +128,8 @@ export async function traceMemorySource(
         id: message.id,
         role: message.role,
         created_at: message.created_at,
+        ...(contents[i] !== cleanMessageText(message.content) ? {truncated: true} : {}),
+        ...(message.capture_kind ? { capture_kind: message.capture_kind } : {}),
         content: contents[i]
       })),
       missing: allIds.length - kept.length

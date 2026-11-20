@@ -312,3 +312,32 @@ npx wrangler deploy --dry-run
 - [Anthropic preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking)
 
 旧 `/admin/gateway` 页面已废弃，仅跳转到 `/admin`；网关设置与召回记录共用主面板的助手选择和 Token。
+
+## 记忆来源、更正与遗忘
+
+`remember` 可以只传正文。想指向某次对话时，可选传 `source_message_ids`。服务端只接受写入空间里仍保留的消息 ID。原有 `type`、`authored_by`、`fact_key`、`replaces` 继续使用。需要追一条记忆的来历时，用 `read_diary(memory_id)`。原地编辑的旧版仍从 `GET /v1/memories/:id/revisions` 读取。
+
+| 想知道什么 | 看哪里 | 如何解读 |
+| --- | --- | --- |
+| 谁保存了这条内容 | `provenance.creation_mode`、`recording_actor` | 经 MCP 显式保存为 `agent_explicit`。网关收到用户的明确记忆指令为 `user_explicit`。Dream 和导入有各自的来源。审核后的版本记录审核渠道。 |
+| 能核实到哪一级身份 | `credential_namespace`、`claimed_author` | 固定空间凭据可以证明调用获准写哪个空间。署名由调用者填写。同一凭据可以供多个客户端使用，因此单凭署名无法认证具体模型。 |
+| 哪句话支持这条记忆 | `source_message_ids`、`attributed_actor`、`evidence_relation` | 这些字段分别说明证据位置、发言角色，以及正文是转述还是解释。即使能核对原话，发言所指的现实事件仍需另行核实。 |
+| 整理时还看过什么 | `provenance.inputs`、`completeness` | 其中 `inputs` 是引用证据，`context_refs` 是只用于审计的同批消息、上下文记忆和背景日记。一个背景材料可能影响措辞，却不足以支持结论。覆盖程度为 `partial` 或 `unknown`。旧行可没有 `provenance`。 |
+
+Dream 沿用原来的抽取批次和审核队列。新抽取要把角色和引文对应到实际收到的消息。缺少支持消息、把提问当决定、把工具参数当作助手发言等候选会被舍弃或留待审核。经网关新记录的助手回合标明是否混入工具内容。旧网关回合缺少这个标记时，对原话的判断会更保守。亲笔与候选冲突时交给人工判断。手动更正仍可用 `replaces` 建立替换关系，原地编辑沿用最近 20 版的保留上限。模型依然可能误读否定、转述或讽刺，尤其在长消息中。
+
+主动 `recall` 处理亲笔、用户决定和演变问题时，会使用对应的来源与历史。精确措辞见 `evidence.messages` 的角色、时间和文字。`available` 表示返回了完整的保留片段，`partial` 表示有来源缺失或片段被裁剪，`unavailable` 表示此次没有可供核对的原话。普通命中仍可作为线索。这里核对的是当前可读的 `messages`，消息归档保有独立的 `search_chat` 入口。未送达网关或记录钩子的对话没有原话可供抽取。
+
+后台每句原话旁有两个动作。“删除这句”（`DELETE /v1/raw/:id`，旧客户端的默认行为）清理该句、归档副本和全文索引，并移除来源列表里的 ID；已经整理出的记忆保留。“撤回这句及其已知衍生记忆”（`?mode=withdraw`）还会立墓碑，沿实际引用追踪衍生记录，先在 D1 下架，再清理向量和触发器，响应里的 `withdrawn_memories` 列出被隐藏的记忆。日记暂时隐藏并清空旧正文，交给现有日记补写任务使用剩余原文重建。两种动作都不会因为某条记忆的整理过程“读过”这句（`context_refs`）而撤下它；助手亲笔写的记忆也不随原话撤回。
+
+没有 `provenance` 的旧行（0023 之前由 Dream、审核或抽取写入）把整批消息都记进了 `source_message_ids`，列出某个 ID 只说明模型读过它。撤回时，只列一个 ID 的旧行按引用处理；列了多个 ID 的旧行只有在正文抄录了被撤回原话（忽略空白、标点和大小写后连续 12 字，较短的原话须整句出现）时才隐藏，其余保留、去掉这个 ID，并在 `unverified_memories` 中列出，供人工查看。MCP `forget` 默认只归档指定记忆、撤下指向它的待审候选；`permanent: true` 走撤回并硬删指定条目。索引服务出错时可以重试撤回。
+
+遗忘覆盖范围取决于保存下来的关联。已经折叠且失去来源映射的历史摘要、手工 handoff、单独保存的珍贵片段和 Notebook，不能凭内容相似自动追删。已有导出、备份、请求日志、诊断记录、外部客户端缓存及已经发送给模型的内容也各有独立的生命周期。运行中的外部请求或旧汇总任务可能持有先前读出的内容。逻辑下架不提供密码学擦除保证。现有整理任务可用剩余材料重新生成摘要，缺少依据时允许留空。
+
+**迁移与回退。** 新 Worker 需要按编号应用增量迁移，包括 `0023_memory_provenance.sql` 和 `0024_dream_evidence.sql`。它给现有表增加可空字段，并建立 ID 撤销表、索引、视图与写入保护。旧行原样可读，无需全库重建向量。若主动召回质量或耗时回退，在现有设置里关闭 `RECALL_PROVENANCE_SELECTION` 可恢复旧的排序与主动证据查询行为。保留迁移和撤销记录；回退整个 Worker 会同时回退应用层的遗忘过滤。
+
+Preview upgrades also apply 0025. A preview digest sometimes copied the entire batch into its diary citation list. Where that list cannot be distinguished from a diary citing every line, the old text and IDs stay in storage for audit. The diary is hidden until backfill can rebuild it from surviving messages.
+
+Migration 0026 also removes similarity-only predecessor edges from identifiable preview approvals and revisions. The version chain still records which entry they replaced.
+
+Migration 0027 narrows the pre-provenance edge in `memory_derivations` to rows that list a single message, so withdrawing an unrelated line from an old Dream batch no longer hides the other memories made from that batch.

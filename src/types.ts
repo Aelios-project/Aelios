@@ -33,6 +33,7 @@ export interface Env {
   MEMORY_INJECT_DECAY_FACTOR?: string;
   // memory_recall 最低分地板，默认 0.15；调用方可用 min_score 临时覆盖。
   // #37 后地板打在"原始相关性分"上 (降权前)，闸三只影响排序，不再把命中挤出地板。
+  RECALL_PROVENANCE_SELECTION?: string;
   RECALL_MIN_SCORE?: string;
   // E 轴: 亲笔记忆 (authored_by 非空) 的排序加成倍数，默认 1.15。只影响排序，不影响地板。
   MEMORY_AUTHORED_BOOST?: string;
@@ -209,6 +210,7 @@ export interface Conversation {
 }
 
 export interface MessageRecord {
+  capture_kind?: string | null;
   id: string;
   conversation_id: string;
   namespace: string;
@@ -223,6 +225,7 @@ export interface MessageRecord {
 export type MemoryVersionStatus = "current" | "superseded" | "under_review";
 
 export interface MemoryRecord {
+  provenance?: string | null;
   id: string;
   namespace: string;
   type: string;
@@ -267,6 +270,7 @@ export interface MemoryLifecycleRow {
 }
 
 export interface MemoryApiRecord {
+  provenance?: import("./memory/provenance").MemoryProvenance;
   id: string;
   namespace: string;
   type: string;

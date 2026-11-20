@@ -138,8 +138,18 @@ test("remember keeps world_fact as world knowledge; other free-form types still 
 test("forget archives by default and erases only when asked", async () => {
   memory("m-a", "一条要收起来的。");
   memory("m-b", "一条要删掉的。");
+  memory("m-context", "另一晚只读过旧记忆。");
+  sqlite.prepare("UPDATE memories SET provenance=? WHERE id='m-context'").run(JSON.stringify({inputs:[],context_refs:["memory:m-a"]}));
+  for (const target of ["m-a", "m-b"]) {
+    sqlite.prepare(`INSERT INTO memory_candidates(id,namespace,type,content,source,status,target_memory_id,created_at,updated_at)
+      VALUES(?,'default','note','待审','dream_update','pending',?,'now','now')`).run(`c-${target}`, target);
+  }
   assert.equal((await call("forget", { id: "m-a" })).structuredContent.data.archived, true);
   assert.equal(row("memories", "m-a").status, "archived");
+  assert.equal(row("memories", "m-context").status, "active");
+  assert.equal(row("memory_candidates","c-m-a").status, "discarded");
+  assert.equal(row("memory_candidates","c-m-b").status, "pending");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM memory_revocations").get()?.n, 0);
   assert.equal((await call("forget", { id: "m-b", permanent: true })).structuredContent.data.deleted, true);
   assert.equal(row("memories", "m-b"), undefined);
   assert.equal((await call("forget", { id: "nope" })).isError, true);
@@ -211,4 +221,187 @@ test("renamed tools reach the same handlers and old names keep working", async (
   // The boot package is cached per namespace for a minute, so only its shape is checked here.
   assert.ok(Array.isArray((await call("memory_boot")).structuredContent.data.glossary));
   assert.equal((await call("no_such_tool")).isError, true);
+});
+
+test("the credential, signature and evidence stay separate across namespaces and revisions", async () => {
+  env.MEMORY_MCP_API_KEY = "fixed-key";
+  const local = (await call("log_conversation", { messages: [{ role: "user", content: "I chose ACP." }] }))
+    .structuredContent.data;
+  const msg = sqlite
+    .prepare("SELECT id FROM messages WHERE conversation_id=?")
+    .get(local.conversation_id)?.id;
+  await call("log_conversation", { namespace: "other", messages: [{ role: "user", content: "private" }] });
+  const foreign = sqlite.prepare("SELECT id FROM messages WHERE namespace='other'").get()?.id;
+  const result = await worker.fetch(
+    new Request("https://aelios.test/mcp", {
+      method: "POST",
+      headers: { authorization: "Bearer fixed-key" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+          name: "remember",
+          arguments: {
+            content: "I favor a small adapter.",
+            authored_by: "Dan9",
+            namespace: "other",
+            source_message_ids: [msg, foreign]
+          }
+        }
+      })
+    }),
+    env,
+    { waitUntil() {} } as any
+  );
+  const id = ((await result.json()) as any).result.structuredContent.data.id;
+  const saved = row("memories", id);
+  assert.deepEqual(
+    [saved.content, saved.authored_by, saved.namespace],
+    ["I favor a small adapter.", "Dan9", "default"]
+  );
+  assert.deepEqual(JSON.parse(saved.source_message_ids), [msg]);
+  const origin = JSON.parse(saved.provenance);
+  assert.deepEqual(
+    [origin.creation_mode, origin.recording_actor, origin.attributed_actor],
+    ["agent_explicit", "mcp:mcp", "unknown"]
+  );
+  const next = (
+    await call("remember", { content: "November 20. I still favor a small adapter.", authored_by: "GPT" })
+  ).structuredContent.data.id;
+  assert.notEqual(id, next);
+  assert.equal(row("memories", id).status, "active");
+  await call("memory_upsert", {
+    fact_key: saved.fact_key,
+    content: "I changed my mind.",
+    authored_by: "GPT"
+  });
+  const revision = sqlite.prepare("SELECT * FROM memory_revisions WHERE memory_id=?").get(id);
+  assert.deepEqual(
+    [revision?.content, revision?.authored_by, revision?.provenance],
+    [saved.content, "Dan9", saved.provenance]
+  );
+});
+
+test("explicit recall distinguishes a signed write, a user's choice and missing or clipped original wording", async () => {
+  const { runRecall } = await import("../src/memory/v2/recall");
+  const { dreamOrigin } = await import("../src/memory/provenance");
+  const wrote = (
+    await call("remember", { content: "ACP planning. Dan9 preferred DSH.", authored_by: "Dan9" })
+  ).structuredContent.data.id;
+  memory("choice", "ACP planning. The user chose ACP.");
+  memory("legacy", "ACP planning. An unattributed estimate.");
+  const line = `I choose ACP. ${"context ".repeat(65)}`;
+  sqlite
+    .prepare(
+      "INSERT INTO messages(id,conversation_id,namespace,role,content,source,created_at) VALUES ('quote','c','default','user',?,'hook','2026-09-01')"
+    )
+    .run(line);
+  const origin = { ...dreamOrigin(["quote"]), attributed_actor: "user", evidence_relation: "paraphrase" };
+  sqlite
+    .prepare("UPDATE memories SET provenance=?,source_message_ids='[\"quote\"]' WHERE id='choice'")
+    .run(JSON.stringify(origin));
+  env.ENABLE_MEMORY_RERANKER = "false";
+  env.VECTORIZE.query = async () => ({
+    matches: [wrote, "legacy", "choice"].map((id) => ({
+      id: `mem_${id}`,
+      score: 0.85,
+      metadata: { ref_id: id, namespace: "default" }
+    }))
+  });
+  const recall = (query: string) =>
+    runRecall(env, { namespace: "default", query, k: 5, skip_inject_mark: true });
+  assert.equal((await recall("What did Dan9 write about ACP planning?")).hits[0]?.id, wrote);
+  const decision = await recall("What did the user decide about ACP planning?");
+  assert.equal(decision.hits[0]?.id, "choice");
+  assert.equal(decision.hits.find((h) => h.id === "legacy")?.provenance, undefined);
+  const exact = await recall("Exact wording of the ACP decision?");
+  assert.equal(exact.evidence?.status, "partial");
+  assert.deepEqual(exact.evidence?.messages, [
+    { id: "quote", role: "user", created_at: "2026-09-01", text: line.slice(0, 400) }
+  ]);
+  sqlite.prepare("DELETE FROM messages WHERE id='quote'").run();
+  assert.deepEqual((await recall("Exact wording of the ACP decision?")).evidence, {
+    status: "unavailable",
+    messages: []
+  });
+  assert.equal((await recall("ACP planning")).evidence, undefined);
+});
+
+test("migration 0023 preserves legacy data and refuses a competing successor atomically", () => {
+  const legacy = new DatabaseSync(":memory:");
+  try {
+    const migration = "0023_memory_provenance.sql";
+    for (const file of readdirSync("migrations")
+      .filter((file) => file < migration && file.endsWith(".sql"))
+      .sort()) {
+      legacy.exec(readFileSync(`migrations/${file}`, "utf8"));
+    }
+    legacy.exec(`INSERT INTO memories(id,namespace,type,content,created_at,updated_at,authored_by)
+      VALUES ('old','default','note','original','2026','2026','Dan9')`);
+    legacy.exec(readFileSync(`migrations/${migration}`, "utf8"));
+    assert.deepEqual(
+      { ...legacy.prepare("SELECT content, authored_by, provenance FROM memories").get() },
+      { content: "original", authored_by: "Dan9", provenance: null }
+    );
+    legacy.exec("UPDATE memories SET superseded_by='first' WHERE id='old'");
+    legacy.exec("BEGIN");
+    try {
+      legacy.exec(`INSERT INTO memories(id,namespace,type,content,created_at,updated_at)
+        VALUES ('second','default','note','late proposal','2026','2026')`);
+      assert.throws(
+        () => legacy.exec("UPDATE memories SET superseded_by='second' WHERE id='old'"),
+        /already superseded/
+      );
+    } finally {
+      legacy.exec("ROLLBACK");
+    }
+    assert.equal(legacy.prepare("SELECT COUNT(*) n FROM memories").get()?.n, 1);
+    assert.equal(
+      legacy.prepare("SELECT superseded_by FROM memories WHERE id='old'").get()?.superseded_by,
+      "first"
+    );
+  } finally {
+    legacy.close();
+  }
+});
+
+test("an edit stops if the database cannot retain the previous version", async () => {
+  const { updateMemory } = await import("../src/db/memories");
+  memory("original", "I chose ACP.");
+  sqlite.exec(
+    "CREATE TRIGGER injected_failure BEFORE INSERT ON memory_revisions BEGIN SELECT RAISE(ABORT, 'snapshot failed'); END"
+  );
+  await assert.rejects(
+    updateMemory(env.DB, { namespace: "default", id: "original", patch: { content: "I changed my mind." } }),
+    /snapshot failed/
+  );
+  assert.equal(row("memories", "original").content, "I chose ACP.");
+});
+
+test("decision evolution includes the previous in-place version only as history", async () => {
+  const original = await call("memory_upsert", { fact_key: "choice:acp", content: "I am considering ACP." });
+  const id = original.structuredContent.data.id;
+  sqlite.prepare("UPDATE memories SET created_at='2026-01-01',updated_at='2026-01-01' WHERE id=?").run(id);
+  await call("memory_upsert", { fact_key: "choice:acp", content: "I chose ACP." });
+  env.ENABLE_MEMORY_RERANKER = "false";
+  env.VECTORIZE.query = async () => ({
+    matches: [{ id: `mem_${id}`, score: 0.99, metadata: { ref_id: id, namespace: "default" } }]
+  });
+  const history = (await call("recall", { query: "How did the ACP decision evolve?", k: 2 }))
+    .structuredContent.data;
+  assert.deepEqual(
+    history.hits.map((h: any) => [h.content, h.version_status]),
+    [
+      ["I am considering ACP.", "superseded"],
+      ["I chose ACP.", "current"]
+    ]
+  );
+  assert.equal(history.hits[0].revision_of, id);
+  const current = (await call("recall", { query: "What did the user decide about ACP?", k: 2 }))
+    .structuredContent.data;
+  assert.deepEqual(
+    current.hits.map((h: any) => h.content),
+    ["I chose ACP."]
+  );
 });

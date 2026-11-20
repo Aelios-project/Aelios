@@ -302,9 +302,8 @@ export async function importChatChunk(
   try {
     const planned: Planned[] = [];
     for (const memory of extracted.memories) {
-      // 出处只认这一段里的消息；模型没标或者标错了，就整段都挂上，审核时至少看得到原文。
-      const own = memory.source_message_ids.filter((id) => chunkIds.has(id));
-      const sources = own.length > 0 ? own : ids;
+      const sources = memory.source_message_ids.filter((id) => chunkIds.has(id));
+      if (!sources.length) continue;
       const hit = await findSimilarActiveMemory(env, { namespace, content: memory.content });
       if (hit && hit.memory.content.trim() === memory.content.trim()) {
         result.duplicates += 1;

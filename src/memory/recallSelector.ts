@@ -1,5 +1,6 @@
 /** One final decision across all authorized spaces and memory sources. */
 import type { Env } from "../types";
+import { readRecallIntent } from "./recallIntent";
 import { cleanMessageText } from "../utils/sanitize";
 import { evidenceWindows, formatExactExcerpt } from "./dankeRecall";
 import { isEvidenceQuery, lexicalOverlapScore, shapeRecallQuery } from "./queryShape";
@@ -160,11 +161,13 @@ function recallPurpose(query: string): "answer" | "association" {
 }
 
 type RankedSpan = { c: SelectorCandidate; text: string; window: number; score: number };
+/** How this turn selects: answering vs. associating, and whether only original wording may surface. */
+type Selection = { purpose: "answer" | "association"; exactOnly: boolean };
 
 function pickEntries(
   ranked: RankedSpan[],
   input: SelectorInput,
-  purpose: "answer" | "association",
+  { purpose, exactOnly }: Selection,
   threshold: number | null
 ): { entries: SurfaceEntry[]; decisions: RecallDecision[] } {
   const entries: SurfaceEntry[] = [];
@@ -177,7 +180,8 @@ function pickEntries(
     const sourceKeys = (r.c.entry.sourceIds || []).map(id => `${r.c.entry.namespace}\n${id}`);
     const factKey = r.c.entry.factKey ? `${r.c.entry.namespace}\n${r.c.entry.factKey}` : "";
     const textKey = `${r.c.entry.speaker || ""}\n${r.c.entry.eventDate || ""}\n${canonical(r.text)}`;
-    const reason = threshold !== null && r.score < threshold ? "below_rerank_threshold"
+    const reason = exactOnly && (r.c.entry.kind !== "quote" || !["user", "assistant"].includes(r.c.entry.speaker ?? "")) ? "original_unavailable"
+      : threshold !== null && r.score < threshold ? "below_rerank_threshold"
       : purpose === "answer" && r.c.entry.kind === "impression" ? "impression_not_evidence"
       : factKey && facts.has(factKey) ? "duplicate_fact"
       : texts.has(textKey) ? "duplicate_content"
@@ -207,11 +211,11 @@ function lexicalRanked(input: SelectorInput, candidates: SelectorCandidate[]): R
 function lexicalFallback(
   input: SelectorInput,
   candidates: SelectorCandidate[],
-  purpose: "answer" | "association",
+  selection: Selection,
   reason: string,
   extra: Partial<SelectorResult> = {}
 ): SelectorResult {
-  const picked = pickEntries(lexicalRanked(input, candidates), input, purpose, null);
+  const picked = pickEntries(lexicalRanked(input, candidates), input, selection, null);
   return { status: "lexical", reason, ...extra, ...picked };
 }
 
@@ -219,6 +223,7 @@ async function rerankedSelection(env: Env, input: SelectorInput, candidates: Sel
   const { model, threshold } = spanRerankerSettings(env);
   const start = Date.now();
   const purpose = recallPurpose(input.query);
+  const selection: Selection = { purpose, exactOnly: readRecallIntent(env, input.query).exact };
   if (LATEST.test(input.query) && purpose === "answer") {
     return { model, threshold, status: "empty", reason: "latest_requires_evidence", entries: [],
       decisions: candidates.map(c => trace(c.entry, "latest_requires_evidence")) };
@@ -233,12 +238,12 @@ async function rerankedSelection(env: Env, input: SelectorInput, candidates: Sel
       const best = indices.reduce((a, b) => scores[b] > scores[a] ? b : a);
       return { ...spans[best], score: scores[best] };
     }).sort((a, b) => b.score - a.score);
-    const picked = pickEntries(ranked, input, purpose, threshold);
+    const picked = pickEntries(ranked, input, selection, threshold);
     return { model, threshold, status: "reranked", entries: picked.entries, decisions: picked.decisions,
       elapsedMs: Date.now() - start };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "reranker_failed";
-    return lexicalFallback(input, candidates, purpose, reason, { model, threshold, elapsedMs: Date.now() - start });
+    return lexicalFallback(input, candidates, selection, reason, { model, threshold, elapsedMs: Date.now() - start });
   }
 }
 

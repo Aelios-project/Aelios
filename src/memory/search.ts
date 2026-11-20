@@ -3,6 +3,7 @@ import {
   markMemoriesRecalled,
   searchMemoriesByText
 } from "../db/memories";
+import { revokedMemoryIds } from "../db/v2/revocation";
 import type { Env, MemoryApiRecord, MemoryLifecycleRow, MemoryRecord } from "../types";
 import { createEmbedding } from "./embedding";
 import { keepGroundedHits, mergeHybridRanks, tokenizeQuery } from "./queryShape";
@@ -72,6 +73,7 @@ export function toMemoryApiRecord(
     status: record.status,
     pinned: Boolean(record.pinned),
     tags: parseJsonArray(record.tags),
+    ...(record.provenance ? { provenance: JSON.parse(record.provenance) } : {}),
     source: record.source,
     source_message_ids: parseJsonArray(record.source_message_ids),
     vector_id: record.vector_id,
@@ -343,12 +345,16 @@ async function searchWithVectorize(
   }));
 
   // legacyCandidates: Vectorize 命中里解不出有效 D1 记录的孤儿向量 (deleted/从未落 D1 的老数据)。
-  const legacyCandidates = legacyRecords.filter((record) => !foundD1Ids.has(record.id));
+  let legacyCandidates = legacyRecords.filter((record) => !foundD1Ids.has(record.id));
   const requireD1Backing = isRequireD1Backing(env);
   // 严格模式: 不给 legacy 兜底留任何位置，孤儿向量整批丢弃而不是降权透传。
   const legacySlots = requireD1Backing
     ? 0
     : Math.max(0, Math.min(input.topK - d1Records.length, legacyFallbackLimit));
+  if (legacySlots > 0 && legacyCandidates.length) {
+    const revoked = await revokedMemoryIds(env.DB, input.namespace, legacyCandidates.map(r => r.id));
+    legacyCandidates = legacyCandidates.filter(r => !revoked.has(r.id));
+  }
   const legacyOnlyRecords = legacySlots > 0
     ? legacyCandidates
       .sort((a, b) => b.score + b.importance * 0.05 - (a.score + a.importance * 0.05))

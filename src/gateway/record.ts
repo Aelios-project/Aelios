@@ -24,6 +24,7 @@ export interface GatewayExchange {
   kind: Turn["kind"];
   userText: string;
   assistantText: string;
+  captureKind?: "visible" | "includes_tool";
   model: string;
   provider: string;
   httpStatus: number;
@@ -74,10 +75,10 @@ export async function persistExchange(env: Env, e: GatewayExchange): Promise<voi
         source: `gateway:${e.profile}`, created_at: e.createdAt, position: Date.parse(e.createdAt) });
       statements.push(env.DB.prepare(`INSERT OR IGNORE INTO messages
       (id, conversation_id, namespace, role, content, source, client_message_hash, upstream_model,
-       upstream_provider, request_model, stream, finish_reason, created_at, seq)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+       upstream_provider, request_model, stream, finish_reason, created_at, seq, capture_kind)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .bind(id, e.conversationId, e.namespace, role, content, `gateway:${e.profile}`, id,
-        e.model, e.provider, e.profile, e.stream ? 1 : 0, e.completion, e.createdAt, seq));
+        e.model, e.provider, e.profile, e.stream ? 1 : 0, e.completion, e.createdAt, seq, role === "assistant" ? e.captureKind ?? null : "visible"));
     };
     if (e.kind === "human" && e.userText && e.completion !== "truncated") addMessage(e.userId, "user", e.userText, 0);
     if (e.completion === "complete" && spoken) addMessage(`${e.id}:assistant`, "assistant", spoken, 1);
@@ -199,6 +200,7 @@ export class OutputCollector {
   /** The output outgrew what the gateway buffers, so part of it was never seen. */
   overflow = false;
   /** Coding mode only: work tool calls (left out of `text`), and the speech tool calls on their own. */
+  hasRecordedTool = false;
   workCalls = 0;
   spoken = "";
   spokenTruncated = false;
@@ -227,6 +229,7 @@ export class OutputCollector {
     if (this.coding && !isSpeechTool(String(name || ""))) { this.workCalls += 1; return; }
     const line = formatToolCall(name, this.coding ? replaceCodeIn(coerceToolInput(input)) : input);
     if (!line) return;
+    this.hasRecordedTool = true;
     if (clipped) { this.truncated = true; if (this.coding) this.spokenTruncated = true; }
     if (this.coding) {
       const spoken = this.spoken ? `${this.spoken}\n${line}` : line;

@@ -44,6 +44,7 @@ export function buildDigestPrompt(input: {
     "你会读取旧长期记忆和当天聊天 transcript，产出一份更干净、更一致、更有用的 memory store 整理计划。",
     "只输出 JSON，不要 markdown，不要解释，不要输出思考过程。",
     "",
+    "日记草稿用 source_message_ids 列出实际引用的原话 ID；没有引用时留空。",
     "Dream 目标：",
     "- 合并重复记忆，避免同一事实以多个版本长期存在。",
     "- 发现过时、被新信息否定、互相矛盾的旧记忆，并提出更新或删除建议（全部进入审核队列）。",
@@ -57,7 +58,7 @@ export function buildDigestPrompt(input: {
     "总原则：",
     "- 原始聊天不要逐条变成记忆，只保留未来真的会用到的事实、偏好、边界、项目进展、承诺。",
     "- 宁可少记，也不要把临时语气、寒暄、重复话、空内容、调试内容写进长期记忆。",
-    "- 当旧记忆和新信息冲突时，优先更新或删除旧记忆，不要并排留下互相打架的版本。",
+    "- 只有明确更正才取代旧立场。提问、备选、推测和沉默不算决定。矛盾未决时留待审核；写清谁说了什么。",
     "- 当新信息只是旧记忆的更准确版本，优先 memories_to_update，不要 memories_to_add。",
     "- 稳定事实的首次抽取由 dream 夜间管线负责，产物全部进审核队列；memories_to_add 默认给空数组。",
     "- 当多条旧记忆重复，保留更完整的一条并删除重复项；必要时先 update 保留项。",
@@ -87,6 +88,7 @@ export function buildDigestPrompt(input: {
       memories_to_update: [
         {
           target_id: "mem_x",
+          source_message_ids: ["<支持更正的消息 ID>"],
           content: "更新后的旧记忆正文",
           type: "fact",
           importance: 0.88,
@@ -94,7 +96,7 @@ export function buildDigestPrompt(input: {
           tags: ["project"]
         }
       ],
-      memories_to_delete: [{ target_id: "mem_y", reason: "空内容或重复" }]
+      memories_to_delete: [{ target_id: "mem_y", source_message_ids: ["<支持归档的消息 ID>"], reason: "空内容或重复" }]
     }),
     "",
     "旧长期记忆候选：",

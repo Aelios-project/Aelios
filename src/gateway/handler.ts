@@ -265,6 +265,7 @@ export function settleOutput(exchange: GatewayExchange, out: OutputCollector, co
   interrupted: boolean): void {
   const said = coding ? codingSpeech(out) : out;
   exchange.assistantText = said.text;
+  exchange.captureKind = out.hasRecordedTool ? "includes_tool" : "visible";
   if (out.model) exchange.model = out.model;
   exchange.completion = !ok || out.failed ? "failed" :
     said.truncated || exchange.completion === "truncated" ? "truncated" :

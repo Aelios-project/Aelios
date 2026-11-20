@@ -25,7 +25,7 @@ type Noul = { type: "noul"; instructions: string; criteria: { true: string; fals
 const GROUNDED: Noul = {
   type: "noul",
   instructions: "候选内容能在 transcript 里找到依据吗？",
-  criteria: { true: "对话里明确说过，没有编造或过度引申", false: "对话里找不到，或者是推测、夸大" }
+  criteria: { true: "说话人、时间、条件和决定状态都有原文支持；工具调用、问题、提议或助手猜测不算用户确认", false: "对话里找不到，或者是推测、夸大" }
 };
 
 const QUESTIONS: Record<JudgeKind, Record<string, Noul>> = {

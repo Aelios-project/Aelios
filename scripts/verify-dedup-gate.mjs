@@ -209,6 +209,7 @@ function createMockD1() {
             confidence,
             tags,
             source,
+            provenance,
             sourceMessageIds,
             updatedAt,
             factKey,
@@ -222,6 +223,7 @@ function createMockD1() {
             row.confidence = confidence;
             row.tags = tags;
             row.source = source;
+            row.provenance = provenance;
             row.source_message_ids = sourceMessageIds;
             row.updated_at = updatedAt;
             row.fact_key = factKey;

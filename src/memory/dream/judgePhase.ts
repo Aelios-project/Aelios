@@ -3,6 +3,7 @@ import type { Env } from "../../types";
 import { newId } from "../../utils/ids";
 import { nowIso } from "../../utils/time";
 import { findSimilarActiveMemory } from "../dedupGate";
+import { dreamOrigin } from "../provenance";
 import type { ExtractedMemory } from "../extract";
 import {
   type DailyDigestResult,
@@ -58,7 +59,11 @@ export async function recordDreamReviewProposal(
       "dream_review_proposal",
       JSON.stringify({
         date: input.dateLabel,
-        message_ids: input.messageIds,
+        message_ids: [...new Set([
+          ...(input.digest.source_message_ids ?? []),
+          ...[...(input.digest.memories_to_add ?? []), ...(input.digest.memories_to_update ?? []),
+            ...(input.digest.memories_to_delete ?? [])].flatMap(item => item.source_message_ids ?? [])
+        ])].filter(id => input.messageIds.includes(id)),
         title: input.digest.title ?? null,
         summary: input.digest.summary ?? null,
         memories_to_add: input.digest.memories_to_add ?? [],
@@ -83,6 +88,7 @@ export async function queueDreamExtractedMemories(
         namespace: input.namespace,
         content: memory.content
       });
+      if (hit?.memory.content === memory.content && hit.memory.source_message_ids.some(id => memory.source_message_ids.includes(id))) continue;
       if (hit) {
         targetMemoryId = hit.memory.id;
         decisionNote = `dedup_gate: similar to ${hit.memory.id} (score=${hit.score.toFixed(2)})`;
@@ -95,7 +101,9 @@ export async function queueDreamExtractedMemories(
         confidence: memory.confidence,
         importance: memory.importance,
         tags: memory.tags,
-        sourceMessageIds: memory.source_message_ids.length ? memory.source_message_ids : input.messageIds,
+        sourceMessageIds: memory.source_message_ids,
+        provenance: { ...dreamOrigin(memory.source_message_ids, { messages: input.messageIds, dates: memory.context_dates }), attributed_actor: memory.attributed_role ?? "unknown",
+          evidence_relation: memory.attributed_role ? "paraphrase" : "interpretation" },
         source: "dream_extract",
         targetMemoryId,
         decisionNote

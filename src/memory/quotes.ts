@@ -1,3 +1,4 @@
+import { asksForExactWording } from "./recallIntent";
 import { getMessagesByIds } from "../db/messages";
 import type { MessageRecord } from "../types";
 import { searchFtsIds } from "./fts";
@@ -58,7 +59,8 @@ function toQuoteHit(row: MessageRecord, tokens: string[]): QuoteHit {
   const content = cleanMessageText(row.content);
   return {
     id: row.id,
-    role: row.role,
+    role: row.capture_kind === "includes_tool" || (row.role === "assistant" && row.source?.startsWith("gateway:") && !row.capture_kind)
+      ? "assistant_record" : row.role,
     content,
     excerpt: excerptAroundMatch(content, tokens),
     created_at: row.created_at,
@@ -79,8 +81,7 @@ async function searchQuotesLike(
   const binds: unknown[] = [input.namespace, ...tokens.map((token) => `%${escapeLike(token)}%`)];
   const result = await db
     .prepare(
-      `SELECT id, conversation_id, namespace, role, content, source, created_at, seq
-       FROM messages
+      `SELECT * FROM messages
        WHERE namespace = ? AND role IN ('user', 'assistant') AND (${clauses.join(" OR ")})
        ORDER BY created_at DESC
        LIMIT ?`
@@ -142,6 +143,10 @@ export async function searchQuotes(
   const fresh = input.excludeVisibleIn
     ? [...byId.values()].filter(hit => !quoteVisibleIn(hit, input.excludeVisibleIn!))
     : [...byId.values()];
+  if (asksForExactWording(input.query)) {
+    return fresh.filter(hit => hit.role === "user" || hit.role === "assistant")
+      .sort((a, b) => b.score - a.score || b.created_at.localeCompare(a.created_at)).slice(0, limit);
+  }
   return clusterQuotes(fresh, limit);
 
 }
@@ -227,7 +232,7 @@ export function formatQuote(hit: QuoteHit, options: { compact?: boolean } = {}):
   const quote = cleanMessageText(hit.excerpt || excerptAroundMatch(hit.content, [])).replace(/\s+/g, " ").trim();
   if (options.compact) return quote;
   const day = hit.created_at.slice(0, 10);
-  const speaker = hit.role === "assistant" ? "助手" : hit.role === "conversation" ? "对话" : "用户";
+  const speaker = hit.role === "assistant" ? "助手" : hit.role === "user" ? "用户" : hit.role === "conversation" ? "对话" : "对话记录";
   return `${day} ${speaker}: 「${quote}」`;
 }
 

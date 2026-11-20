@@ -1,8 +1,11 @@
+import type { MemoryProvenance } from "../../memory/provenance";
+import { sha256Hex } from "../../utils/hash";
 import { clampMemoryType } from "../../memory/canonicalTypes";
 import { newId } from "../../utils/ids";
 import { nowIso } from "../../utils/time";
 
 export interface MemoryCandidateRow {
+  provenance?: string | null;
   id: string;
   namespace: string;
   type: string;
@@ -21,6 +24,7 @@ export interface MemoryCandidateRow {
 }
 
 export interface CreateMemoryCandidateInput {
+  provenance?: MemoryProvenance;
   namespace: string;
   type: string;
   content: string;
@@ -40,7 +44,15 @@ export async function createMemoryCandidate(
 ): Promise<MemoryCandidateRow> {
   // 幂等闸：同一 namespace 下已有等价的 pending 候选就直接复用，不再入队。
   // dream 每晚重跑会对同一目标反复提删除/更新提案，没有这道闸队列会被灌满重复项。
-  const dup = input.targetMemoryId
+  const observed = input.provenance?.creation_mode === "dream_derived";
+  let id = newId("cand");
+  if (observed) {
+    const refs = input.sourceMessageIds?.length ? input.sourceMessageIds : input.provenance?.inputs;
+    const target = input.source === "dream_extract" ? null : input.targetMemoryId;
+    const signature = [input.namespace, input.source, input.content, input.factKey, target, [...new Set(refs)].sort()];
+    id = `cand_${(await sha256Hex(JSON.stringify(signature))).slice(0, 32)}`;
+  }
+  const dup = observed ? await getMemoryCandidateById(db, { namespace: input.namespace, id }) : input.targetMemoryId
     ? await db
         .prepare(
           `SELECT * FROM memory_candidates
@@ -59,10 +71,10 @@ export async function createMemoryCandidate(
         .first<MemoryCandidateRow>();
   if (dup) return dup;
 
-  const id = newId("cand");
   const now = nowIso();
   const record: MemoryCandidateRow = {
     id,
+    provenance: JSON.stringify(input.provenance) ?? null,
     namespace: input.namespace,
     type: clampMemoryType(input.type, "note"),
     content: input.content,
@@ -84,8 +96,8 @@ export async function createMemoryCandidate(
       `INSERT INTO memory_candidates (
         id, namespace, type, content, fact_key, confidence, importance, tags,
         source_message_ids, source, status, target_memory_id, decision_note,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        created_at, updated_at, provenance
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`
     )
     .bind(
       record.id,
@@ -102,7 +114,7 @@ export async function createMemoryCandidate(
       record.target_memory_id,
       record.decision_note,
       record.created_at,
-      record.updated_at
+      record.updated_at, record.provenance ?? null
     )
     .run();
 
@@ -215,6 +227,13 @@ export async function getMemoryCandidateById(
     .bind(input.namespace, input.id)
     .first<MemoryCandidateRow>();
   return row ?? null;
+}
+
+/** Recover a committed approval if delivery stopped before the candidate status was saved. */
+export async function approvedCandidateMemory(db: D1Database, namespace: string, candidateId: string): Promise<string | null> {
+  const row = await db.prepare(`SELECT id FROM memories WHERE namespace=? AND json_extract(provenance,'$.candidate_id')=?`)
+    .bind(namespace, candidateId).first<{id:string}>();
+  return row?.id ?? null;
 }
 
 export async function updateMemoryCandidateStatus(

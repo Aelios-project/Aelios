@@ -158,7 +158,7 @@ assert.match(recallSource, /const rowById = new Map\(rows\.map\(\(row\) => \[row
 assert.match(recallSource, /function candidateLongtailIds/);
 assert.match(memoriesApiSource, /export async function handleLongtailApi/);
 assert.match(memoriesApiSource, /const result = await deleteLongtail\(env, \{ namespace, id \}\);/);
-assert.match(memoriesApiSource, /import \{ deleteVectorMemory \} from "\.\.\/memory\/vectorStore";/);
+assert.match(memoriesApiSource, /import \{[^}]*\bdeleteVectorMemory\b[^}]*\} from "\.\.\/memory\/vectorStore";/);
 assert.match(memoriesApiSource, /source: "legacy_vectorize"/);
 assert.match(adminSource, /\/v1\/longtail\/' \+ encodeURIComponent\(item\.id\)/);
 assert.match(adminSource, /worldSelection: \{\}/);
@@ -185,7 +185,7 @@ assert.match(dbV2Source, /import \{ clampMemoryType \} from "(?:\.\.\/)+memory\/
 assert.match(dbV2Source, /clampMemoryType\(input\.type, "note"\)/);
 // memories.ts writes through storedMemoryType: the eight, plus world_fact only where a caller asks for it.
 assert.match(dbV2Source, /storedMemoryType\(input\.type, "fact", input\.allowWorldFact\)/);
-assert.match(dbV2Source, /storedMemoryType\(input\.newType, "fact", input\.allowWorldFact\)/);
+assert.match(dbV2Source, /storedMemoryType\(input\.newType \?\? old\?\.type, "fact", input\.allowWorldFact \|\|/);
 assert.match(source, /import \{ clampMemoryType \} from "\.\/canonicalTypes"/);
 assert.match(source, /type: clampMemoryType\(input\.type, "note"\),/);
 assert.match(memoriesApiSource, /clampMemoryType\(readString\(body\.type\), "note"\)/);

@@ -4,7 +4,7 @@ import { requireScope } from "../auth/scopes";
 import { getOrCreateConversation } from "../db/conversations";
 import { createMemory, getMemoryById, listMemoriesPage, softDeleteMemory, updateMemory } from "../db/memories";
 import { chatArchiveEnabled } from "../db/chatArchive";
-import { getMessagesByIds, listMessagesByNamespaceInRange, saveIngestMessages } from "../db/messages";
+import { getMessagesByIds, retainedMessageIds, listMessagesByNamespaceInRange, saveIngestMessages } from "../db/messages";
 import { runDailyMemoryDigest } from "../memory/dailyDigest";
 import { writeDiaryAfterDream } from "../memory/diaryWriter";
 import { deleteMemoryEmbedding, upsertMemoryEmbedding } from "../memory/embedding";
@@ -15,7 +15,10 @@ import { filterAndCompressMemoriesWithMeta } from "../memory/filter";
 import { formatMemoryPatch } from "../memory/inject";
 import { findSimilarActiveMemory } from "../memory/dedupGate";
 import { searchMemories, toMemoryApiRecord } from "../memory/search";
-import { deleteVectorMemory } from "../memory/vectorStore";
+import { invalidateKnownInputs } from "../db/v2/revocation";
+import { approvedCandidateMemory } from "../db/v2/candidates";
+import { explicitWrite, reviewedOrigin, type MemoryProvenance } from "../memory/provenance";
+import { deleteVectorMemory, getVectorMemory } from "../memory/vectorStore";
 import { clampMemoryType } from "../memory/canonicalTypes";
 import {
   archiveMemory,
@@ -99,8 +102,9 @@ async function handleCreateMemory(
     return openAiError("content is required", 400);
   }
 
+  const namespace = resolveNamespace(profile, body.namespace);
+  const sourceMessageIds = await retainedMessageIds(env.DB, namespace, readStringArray(body.source_message_ids));
   if (isV2Enabled(env)) {
-    const namespace = resolveNamespace(profile, body.namespace);
     const factKey = readString(body.fact_key);
     if (!factKey) return openAiError("fact_key is required in v2; use memory_pin for precious append-only notes", 400);
     try {
@@ -112,8 +116,9 @@ async function handleCreateMemory(
         importance: readNumber(body.importance, 0.6),
         confidence: readNumber(body.confidence, 0.8),
         tags: readStringArray(body.tags),
+        provenance: explicitWrite(profile, "rest", readString(body.authored_by)),
         source: readOptionalString(body.source) || profile.source,
-        sourceMessageIds: readStringArray(body.source_message_ids),
+        sourceMessageIds,
         validAsOf: readOptionalString(body.valid_as_of),
         // E 轴 (0011)：只在亲手来源 (mcp/manual/api) 时生效，db 层裁剪。
         authoredBy: readOptionalString(body.authored_by),
@@ -141,8 +146,9 @@ async function handleCreateMemory(
       confidence: readNumber(body.confidence, 0.8),
       pinned: readBoolean(body.pinned),
       tags: readStringArray(body.tags),
+      provenance: explicitWrite(profile, "rest", readString(body.authored_by)),
       source: readOptionalString(body.source) || profile.source,
-      sourceMessageIds: readStringArray(body.source_message_ids),
+      sourceMessageIds,
       expiresAt: readOptionalString(body.expires_at)
     });
     await syncMemoryEmbeddingBestEffort(env, created);
@@ -294,7 +300,7 @@ async function handleRecallMemories(request: Request, env: Env, profile: KeyProf
   const types = readStringArray(body.types);
   const includePrompt = readBoolean(body.include_prompt);
   // LMC-5 additive: explicit history opt-in (superseded rows). Default false.
-  const includeHistory = readBoolean(body.include_history, false);
+  const includeHistory = body.include_history === undefined ? undefined : readBoolean(body.include_history, false);
 
   const result = await runRecall(env, {
     namespace,
@@ -311,16 +317,22 @@ async function handleRecallMemories(request: Request, env: Env, profile: KeyProf
     score: h.score,
     importance: 0.5,
     source: h.source,
+    ...(h.provenance ? {provenance: h.provenance} : {}),
+    ...(h.version_status ? {version_status: h.version_status, recorded_date: h.recorded_date, event_date: h.event_date} : {}),
+    ...(h.revision_of ? {revision_of: h.revision_of} : {}),
     source_layer: h.source_layer
   }));
 
   let prompt: string | undefined;
-  if (includePrompt && data.length > 0) {
+  if (includePrompt && result.evidence) {
+    prompt = [`[原文状态 ${result.evidence.status}]`, ...result.evidence.messages.map(message =>
+      `[${message.created_at}][${message.role}] ${message.text}`)].join("\n");
+  } else if (includePrompt && data.length > 0) {
     const promptRecords: MemoryApiRecord[] = data.map((d) => ({
       id: d.id,
       namespace,
       type: d.type,
-      content: d.content,
+      content: d.version_status === "superseded" ? `[历史版本] ${d.content}` : d.content,
       summary: null,
       importance: d.importance,
       confidence: 0.8,
@@ -356,6 +368,7 @@ async function handleRecallMemories(request: Request, env: Env, profile: KeyProf
   return json({
     data,
     // #35: 周块与 data 平行下发，不混进 data —— 它是上下文块，不是命中。
+    ...(result.evidence ? {evidence: result.evidence} : {}),
     week_blocks: result.week_blocks,
     meta: {
       namespace,
@@ -511,6 +524,7 @@ function toCandidateApiRecord(row: MemoryCandidateRow) {
     importance: row.importance,
     tags: parseJsonArray(row.tags),
     source_message_ids: parseJsonArray(row.source_message_ids),
+    ...(row.provenance ? {provenance: JSON.parse(row.provenance)} : {}),
     source: row.source,
     status: row.status,
     target_memory_id: row.target_memory_id,
@@ -787,6 +801,7 @@ async function createApprovedMemoryFromCandidate(
     tags: string[];
     sourceMessageIds: string[];
     source: string;
+    provenance: MemoryProvenance;
     excludeIds?: string[];
     /** 只在新建时用 (导入的候选带着原来的日期)。 */
     createdAt?: string | null;
@@ -802,6 +817,7 @@ async function createApprovedMemoryFromCandidate(
       importance: input.importance,
       tags: input.tags,
       source: input.source,
+      provenance: input.provenance,
       sourceMessageIds: input.sourceMessageIds,
       createdAt: input.createdAt
     });
@@ -813,7 +829,7 @@ async function createApprovedMemoryFromCandidate(
     content: input.content,
     excludeIds: input.excludeIds
   });
-  if (hit) {
+  if (hit && !hit.explicitlyWritten) {
     const result = await supersedeMemory(env, {
       namespace: input.namespace,
       oldId: hit.memory.id,
@@ -824,6 +840,7 @@ async function createApprovedMemoryFromCandidate(
       confidence: input.confidence,
       tags: input.tags,
       source: input.source,
+      provenance: input.provenance,
       sourceMessageIds: input.sourceMessageIds,
       reason: "dedup_gate_supersede",
       createdAt: input.createdAt
@@ -839,6 +856,7 @@ async function createApprovedMemoryFromCandidate(
     importance: input.importance,
     tags: input.tags,
     source: input.source,
+    provenance: input.provenance,
     sourceMessageIds: input.sourceMessageIds,
     createdAt: input.createdAt
   });
@@ -920,9 +938,10 @@ export async function handleMemoryCandidates(request: Request, env: Env): Promis
   const importance = readNumber(body.importance, candidate.importance);
   const tags = Array.isArray(body.tags) ? readStringArray(body.tags) : parseJsonArray(candidate.tags);
   const sourceMessageIds = Array.isArray(body.source_message_ids)
-    ? readStringArray(body.source_message_ids)
+    ? await retainedMessageIds(env.DB, namespace, readStringArray(body.source_message_ids))
     : parseJsonArray(candidate.source_message_ids);
 
+  const provenance = reviewedOrigin(candidate, "review", content !== candidate.content || Array.isArray(body.source_message_ids));
   if (action === "undo") {
     const result = await undoJudgeDecision(env, namespace, candidate);
     if (!result.ok) return openAiError(result.error, result.httpStatus);
@@ -937,6 +956,13 @@ export async function handleMemoryCandidates(request: Request, env: Env): Promis
   }
 
   if (action === "approve") {
+    const saved = await approvedCandidateMemory(env.DB, namespace, candidate.id);
+    if (saved) {
+      const updated = candidate.status === "pending" ? await updateMemoryCandidateStatus(env.DB, {
+        namespace, id, status: "approved", targetMemoryId: saved
+      }) : candidate;
+      return json({data: {candidate: updated ? toCandidateApiRecord(updated) : null, memory_id: saved}});
+    }
     if (candidate.source === "dream_delete" && candidate.target_memory_id) {
       const archived = await archiveMemory(env, { namespace, id: candidate.target_memory_id });
       if (!archived) return openAiError("Target memory not found", 404);
@@ -978,6 +1004,7 @@ export async function handleMemoryCandidates(request: Request, env: Env): Promis
           importance,
           tags,
           source: "review",
+          provenance,
           sourceMessageIds,
           reason: "approve_update",
           createdAt: importCreatedAt
@@ -1014,6 +1041,7 @@ export async function handleMemoryCandidates(request: Request, env: Env): Promis
       tags,
       sourceMessageIds,
       source: "review",
+      provenance,
       excludeIds: candidate.target_memory_id ? [candidate.target_memory_id] : undefined
     });
     const updated = await updateMemoryCandidateStatus(env.DB, {
@@ -1055,6 +1083,7 @@ export async function handleMemoryCandidates(request: Request, env: Env): Promis
       patch: {
         type,
         content: mergedContent,
+        provenance,
         confidence: Math.max(confidence, target.confidence),
         importance: Math.max(importance, target.importance),
         tags,
@@ -1086,6 +1115,7 @@ export async function handleMemoryCandidates(request: Request, env: Env): Promis
       importance,
       tags,
       source: "review",
+      provenance,
       sourceMessageIds,
       reason: readString(body.decision_note) || "candidate_supersede"
     });
@@ -1133,6 +1163,7 @@ async function handlePatchMemory(
   if (!existing || existing.namespace !== namespace) return openAiError("Memory not found", 404);
 
   const patch = {
+    provenance: explicitWrite(profile, "rest"),
     type: readString(body.type),
     content: readString(body.content),
     summary: readOptionalString(body.summary),
@@ -1142,7 +1173,7 @@ async function handlePatchMemory(
     pinned: typeof body.pinned === "boolean" ? readBoolean(body.pinned) : undefined,
     tags: Array.isArray(body.tags) ? readStringArray(body.tags) : undefined,
     source: body.source === undefined ? undefined : readOptionalString(body.source),
-    sourceMessageIds: Array.isArray(body.source_message_ids) ? readStringArray(body.source_message_ids) : undefined,
+    sourceMessageIds: Array.isArray(body.source_message_ids) ? await retainedMessageIds(env.DB, namespace, readStringArray(body.source_message_ids)) : undefined,
     expiresAt: body.expires_at === undefined ? undefined : readOptionalString(body.expires_at)
   };
 
@@ -1176,13 +1207,16 @@ async function handleDeleteMemory(
   const namespace = resolveNamespace(profile, new URL(request.url).searchParams.get("namespace"));
   const existing = await getMemoryById(env.DB, { namespace, id });
   if (!existing || existing.namespace !== namespace) {
+    const legacy = env.VECTORIZE ? await getVectorMemory(env, id) : null;
+    if (!legacy || legacy.namespace !== namespace) return openAiError("Memory not found", 404);
     const deletedLegacyVector = await deleteVectorMemory(env, id);
     if (deletedLegacyVector) return json({ data: { id, deleted: true, source: "legacy_vectorize" } });
     return openAiError("Memory not found", 404);
   }
 
-  const deleted = await softDeleteMemory(env.DB, { namespace, id });
-  if (deleted) await deleteMemoryEmbeddingBestEffort(env, deleted);
+  try { await invalidateKnownInputs(env, { namespace, id }, "memory"); }
+  catch { return openAiError("Memory cleanup incomplete; retry deletion", 503); }
+  await softDeleteMemory(env.DB, { namespace, id });
   return json({ data: { id: existing.id, vector_id: existing.vector_id, deleted: true } });
 }
 
