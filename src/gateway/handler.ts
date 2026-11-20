@@ -2,6 +2,7 @@ import { authenticate } from "../auth/apiKey";
 import { markMemoriesInjected, listPrecious } from "../db/v2";
 import { recallInjectionBudget } from "../memory/filter";
 import { isEvidenceQuery, isPreciousRelevant, isTemporalQuery, selectRelevantPrecious, shapeRecallQuery } from "../memory/queryShape";
+import { orderCurrentStateSurface } from "../memory/currentState/surface";
 import { selectRecall } from "../memory/recallSelector";
 import { searchQuotes } from "../memory/quotes";
 import { assembleRecallSurface, type SurfaceEntry } from "../memory/surface";
@@ -11,7 +12,7 @@ import { newId } from "../utils/ids";
 import { nowIso } from "../utils/time";
 import { cleanMessageText } from "../utils/sanitize";
 import { codingClient, codingSpeech, recallWords, stripCodeBlocks } from "./coding";
-import { findIdentity, identityNamespace, identityReadNamespaces, isMainModel, loadConfig, type GatewayConfig, type Identity, type Protocol } from "./config";
+import { assistantNameOf, findIdentity, identityNamespace, identityReadNamespaces, isMainModel, loadConfig, type GatewayConfig, type Identity, type Protocol } from "./config";
 import { classifyTurn, hasServerState, inputItems, recentHumanTexts, validateBody, visibleText, type Body, type Turn } from "./protocol";
 import { RequestContractError } from "./request";
 import { dispatchExchange, persistExchange, persistHumanUtterance, observeResponse, prepareExchange, settleExchange, type GatewayExchange, type OutputCollector } from "./record";
@@ -69,6 +70,7 @@ export async function recallPatch(
         skip_inject_mark: true,
         grounded: false,
         attach_week_blocks: temporal,
+        assistant_name: assistantNameOf(identity),
         waitUntil: promise => ctx.waitUntil(promise.catch(() => console.error("gateway recall accounting failed")))
       }),
       evidence
@@ -104,7 +106,7 @@ export async function recallPatch(
       ...regularHits.map(p => ({
         kind: memoryKind(p.source, p.type, p.authored_by), content: p.content, id: p.id,
         sourceIds: p.source_message_ids, factKey: p.fact_key,
-        recordedDate: p.recorded_date, eventDate: p.event_date
+        recordedDate: p.recorded_date, eventDate: p.event_date, currentState: p.current_state
       })),
       ...weekBlocks.map(p => ({ kind: "impression", id: `week:${p.week}`, content: `${p.week}: ${p.summary}` }))
     ].map(entry => ({ ...entry, namespace }));
@@ -126,7 +128,7 @@ export async function recallPatch(
   const selection = await selectRecall(env, {
     query, recent, visible: options.excludeVisibleIn, entries, maxItems: budget.maxItems
   });
-  const assembled = assembleRecallSurface(selection.entries, {
+  const assembled = assembleRecallSurface(orderCurrentStateSurface(selection.entries), {
     budget: identity.maxMemoryChars || 6000,
     maxItems: budget.maxItems,
     maxChars: budget.maxChars

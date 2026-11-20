@@ -54,6 +54,7 @@ export interface Env {
   TRIGGER_BUILD_MODEL?: string;
   ENABLE_DAILY_MEMORY_DIGEST?: string;
   DREAM_NAMESPACE?: string;
+  CURRENT_STATE_PROJECTION?: string;
   DREAM_MAX_MESSAGES?: string;
   DREAM_MAX_RUNS?: string;
   DREAM_MAX_TOKENS?: string;
@@ -305,6 +306,7 @@ export interface MemoryApiRecord {
   // --- LMC-5 E 轴 (memories 本体 0011，可选 additive) ---
   authored_by?: string | null;
   response_tendency?: string | null;
+  current_state?: { status: "outdated"; by: string; as_of: string };
 }
 
 // LMC-5 Y 轴: relation 边类型

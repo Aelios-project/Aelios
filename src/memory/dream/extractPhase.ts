@@ -1,3 +1,6 @@
+import { groundCandidate } from "../grounding";
+import { DECISION_FORMAT, extractDecisionFallback } from "../currentState/extract";
+import { isCurrentStateEnabled } from "../currentState/projection";
 import type { Env, MemoryApiRecord, MessageRecord, OpenAIChatRequest } from "../../types";
 import { callDreamModelJson, DreamModelTimeoutError } from "./modelCall";
 import { extractJsonObject } from "../../utils/parse";
@@ -34,6 +37,7 @@ export function buildDigestPrompt(input: {
   existingMemories: MemoryApiRecord[];
   hasMore: boolean;
   speakers?: DreamSpeakers | null;
+  scopedDecisions?: boolean;
 }): string {
   const speakers = input.speakers ?? null;
   const speakerRule = speakers
@@ -99,6 +103,8 @@ export function buildDigestPrompt(input: {
       memories_to_delete: [{ target_id: "mem_y", source_message_ids: ["<支持归档的消息 ID>"], reason: "空内容或重复" }]
     }),
     "",
+    ...(input.scopedDecisions ? [DECISION_FORMAT,
+      "另给 decisions 数组，元素含 content、type、attributed_role、evidence_quote、source_message_ids 和 decision。decision.state_of 可列下面旧记忆里被这个决定更新了现状说法的 ID。"] : []),
     "旧长期记忆候选：",
     formatExistingMemories(input.existingMemories),
     "",
@@ -298,7 +304,8 @@ export async function runExtractPhase(
       messages,
       existingMemories: input.existingMemories,
       hasMore,
-      speakers
+      speakers,
+      scopedDecisions: isCurrentStateEnabled(env)
     });
     const modelResult = await callDigestModel(env, prompt, {
       dateLabel: input.dateLabel,
@@ -314,6 +321,7 @@ export async function runExtractPhase(
         messages,
         speakers,
         dateLabel: input.dateLabel,
+        decisionInstructions: isCurrentStateEnabled(env) ? DECISION_FORMAT : undefined,
         deadlineAt
       });
     }
@@ -331,11 +339,20 @@ export async function runExtractPhase(
       reductions += 1;
       continue;
     }
+    if (modelResult.digest?.decisions) {
+      modelResult.digest.decisions = isCurrentStateEnabled(env)
+        ? modelResult.digest.decisions.flatMap(candidate => groundCandidate(candidate, messages))
+        : undefined;
+    }
+    const candidates = [...(modelResult.digest?.decisions ?? []), ...(extractResult?.memories ?? [])];
+    if (modelResult.digest && extractResult && !extractResult.reason && isCurrentStateEnabled(env)) {
+      candidates.push(...await extractDecisionFallback(env, { namespace: input.namespace, messages, candidates, deadlineAt }));
+    }
     return {
       messages,
       hasMore,
       modelResult,
-      extractedMemories: extractResult?.memories ?? [],
+      extractedMemories: candidates,
       extractReason: extractResult?.reason,
       extractModel: extractResult?.model,
       extractStatus: extractResult?.status,

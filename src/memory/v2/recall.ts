@@ -31,7 +31,8 @@ import { filterAndCompressMemories } from "../filter";
 import { createEmbedding } from "../embedding";
 import { getMessagesByIds } from "../../db/messages";
 import { searchQuotes } from "../quotes";
-import { readRecallIntent } from "../recallIntent";
+import { annotateCurrentState, type CurrentState } from "../currentState/projection";
+import { EMPTY_RECALL_INTENT, readRecallIntent } from "../recallIntent";
 import type { MemoryProvenance } from "../provenance";
 import { shapeRecallQuery } from "../queryShape";
 import { expandRecallByRelations, isRelationExpansionEnabled } from "../relations";
@@ -335,9 +336,12 @@ export interface RecallInput {
   grounded?: boolean;
   // Week diaries are impressions, not evidence. Only attach when the question is temporal.
   attach_week_blocks?: boolean;
+  // The name the user calls this assistant (gateway knows it). Omitted: looked up only when needed.
+  assistant_name?: string | null;
 }
 
 export interface RecallHit {
+  current_state?: CurrentState;
   revision_of?: string;
   provenance?: Omit<MemoryProvenance, "inputs" | "context_refs" | "candidate_id">;
   version_status?: string | null;
@@ -420,7 +424,7 @@ export async function runRecall(env: Env, input: RecallInput): Promise<RecallRes
 
   // Explicit searches only; automatic grounded=false recall keeps its ranking.
   const { evolution, writes, userDecision, exact } = input.grounded !== false
-    ? readRecallIntent(env, query) : { evolution: false, writes: false, userDecision: false, exact: false };
+    ? readRecallIntent(env, query) : EMPTY_RECALL_INTENT;
   const history = input.include_history ?? evolution;
   const shaped = shapeRecallQuery({ query, recent: input.recent });
   const glossaryQuery = shaped.thin
@@ -584,7 +588,7 @@ export async function runRecall(env: Env, input: RecallInput): Promise<RecallRes
   const beforeFloor = [...afterRelation, ...longtailHits]
     .sort((a, b) => b.score - a.score);
   const flooredIds: string[] = [];
-  const allHits = beforeFloor
+  const rankedHits = beforeFloor
     .filter((hit) => {
       // Nomination pools stay wide for the later reranker. Explicit search
       // still drops scores that only cleared the padded lexical floor.
@@ -594,6 +598,7 @@ export async function runRecall(env: Env, input: RecallInput): Promise<RecallRes
       return false;
     })
     .slice(0, k);
+  const allHits = await annotateCurrentState(env, input.namespace, rankedHits, query, history === true, k, input.assistant_name);
 
   // 6. 记 last_injected_at (闸三记账)。
   //    只记实际注入的 (通过闸二没有被剔除的); 珍贵的归 boot 不在这里记。

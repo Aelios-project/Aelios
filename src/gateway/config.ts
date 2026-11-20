@@ -196,6 +196,11 @@ export function identitySpeakers(identity: Identity | undefined): DreamSpeakers 
   };
 }
 
+/** What the user calls this assistant, when known. The slug counts only once a user name is set, as in Dream. */
+export function assistantNameOf(identity: Identity): string | null {
+  return identitySpeakers(identity)?.assistantName ?? (identity.assistantName?.trim() || null);
+}
+
 export function speakersForNamespace(config: GatewayConfig, namespace: string): DreamSpeakers | null {
   const named = config.identities.find((identity) =>
     identityNamespace(identity) === namespace && Boolean(identity.userName?.trim()));

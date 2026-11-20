@@ -396,7 +396,11 @@ async function syncMemoryVector(
 ): Promise<void> {
   try {
     const record = await fetchMemoryForSync(env.DB, input);
-    if (record) await upsertMemoryEmbedding(env, record);
+    if (record?.status === "active") {
+      await upsertMemoryEmbedding(env, record);
+    } else if (record?.vector_id) {
+      await env.VECTORIZE?.deleteByIds([record.vector_id]);
+    }
   } catch (error) {
     console.error("v2 vector sync failed", { id: input.id, error });
   }
@@ -686,14 +690,19 @@ export async function deleteMemoryV2(
   env: Env,
   input: { namespace: string; id: string }
 ): Promise<boolean> {
+  return Boolean(await deleteMemoryWithReport(env, input));
+}
+
+export async function deleteMemoryWithReport(env: Env, input: { namespace: string; id: string }) {
   const db = env.DB;
-  if (!await invalidateKnownInputs(env, input, "memory")) return false;
+  const report = await invalidateKnownInputs(env, input, "memory");
+  if (!report) return null;
   await db.batch([
     db.prepare("DELETE FROM memory_revisions WHERE namespace=? AND memory_id=?").bind(input.namespace, input.id),
     db.prepare("DELETE FROM memory_lifecycle WHERE namespace=? AND memory_id=?").bind(input.namespace, input.id),
     db.prepare("DELETE FROM memories WHERE namespace=? AND id=?").bind(input.namespace, input.id)
   ]);
-  return true;
+  return report;
 }
 
 // =====================================================================

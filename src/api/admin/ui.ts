@@ -960,10 +960,14 @@ tailwind.config = { corePlugins: { preflight: false } };
               <template x-for="memory in filteredMemories()" :key="memory.id">
                 <div :style="memory.open ? 'background: var(--soft)' : ''">
                   <button type="button" @click="memory.open = !memory.open" class="mem-head" :aria-expanded="memory.open ? 'true' : 'false'">
-                    <span class="mem-text" :class="memory.open ? '' : 'line-clamp-2'" x-text="memory.content"></span>
+                    <span class="mem-text">
+                      <span x-show="isScopedDecision(memory)" class="mb-1 inline-flex"><span class="chip t-decision" x-text="decisionBadge(memory)"></span></span>
+                      <span class="block" :class="memory.open ? '' : 'line-clamp-2'" x-text="memory.content"></span>
+                      <span x-show="memory.current_state && memory.current_state.status === 'outdated'" class="mt-1 block text-xs" style="color: var(--warn)" x-text="outdatedNotice(memory)"></span>
+                    </span>
                     <span class="mem-col"><span class="chip" :class="typeChipClass(memory.type)" x-text="typeLabel(memory.type)"></span></span>
                     <span class="mem-col" x-text="importanceLabel(memory.importance)"></span>
-                    <span class="mem-col" x-text="shortDate(memory.updated_at || memory.created_at)"></span>
+                    <span class="mem-col" x-text="shortDate(memory.valid_as_of || memory.updated_at || memory.created_at)"></span>
                   </button>
                   <div x-show="memory.open" class="mem-detail">
                     <template x-if="memory.editing">
@@ -972,22 +976,55 @@ tailwind.config = { corePlugins: { preflight: false } };
                     <div class="facts">
                       <div><span class="k">${t("重要性", "Importance")}</span><span x-text="importanceLabel(memory.importance)"></span></div>
                       <div><span class="k">${t("把握", "Confidence")}</span><span x-text="pct(memory.confidence)"></span></div>
+                      <div x-show="isScopedDecision(memory)"><span class="k">${t("决定范围", "Decision scope")}</span><span class="mono text-xs" x-text="decisionScopeLabel(memory)"></span></div>
+                      <div x-show="isScopedDecision(memory) && memory.valid_as_of"><span class="k">${t("决定日期", "Decided on")}</span><span x-text="fmt(memory.valid_as_of)"></span></div>
                       <div x-show="memory.supersedes_id"><span class="k">${t("取代了", "Replaced")}</span><span class="mono text-xs" x-text="memory.supersedes_id"></span></div>
                       <div x-show="memory.superseded_by_id"><span class="k">${t("被它取代", "Replaced by")}</span><span class="mono text-xs" x-text="memory.superseded_by_id"></span></div>
-                      <div><span class="k">${t("历史", "History")}</span><button type="button" @click="toggleMemoryRevisions(memory)" class="link text-left" x-text="memory.revOpen ? L('收起旧版', 'Hide versions') : L('看旧版', 'See versions')"></button></div>
+                      <div><span class="k">${t("历史", "History")}</span><button type="button" @click="toggleMemoryRevisions(memory)" class="link text-left" x-text="memory.revOpen ? (isScopedDecision(memory) ? L('收起历史与依据', 'Hide history & sources') : L('收起旧版', 'Hide versions')) : (isScopedDecision(memory) ? L('看历史与依据', 'See history & sources') : L('看旧版', 'See versions'))"></button></div>
                     </div>
                     <div x-show="memory.revOpen" class="flex flex-col gap-2 rounded-[10px] p-3" style="background: var(--soft)">
-                      <p class="text-xs muted">${t("原地改写之前的样子都在这里（最多 20 版）。恢复也是一次改写，现在这版会先存进来。", "Earlier versions from in-place edits (up to 20). Restoring is also an edit; the current version is saved first.")}</p>
+                      <p x-show="!isScopedDecision(memory)" class="text-xs muted">${t("原地改写之前的样子都在这里（最多 20 版）。恢复也是一次改写，现在这版会先存进来。", "Earlier versions from in-place edits (up to 20). Restoring is also an edit; the current version is saved first.")}</p>
+                      <p x-show="isScopedDecision(memory)" class="text-xs muted">${t("这里展示同范围的历史决定、晚到修订与依据原话。决定记录不能直接编辑正文。", "Shows superseded decisions in this scope, late-arriving revisions, and source messages. Decision records cannot be edited directly.")}</p>
                       <p x-show="!memory.revisions" class="text-xs muted" x-text="L('加载中…', 'Loading…')"></p>
-                      <p x-show="memory.revisions && memory.revisions.length === 0" class="text-xs muted" x-text="L('没改写过。', 'Never edited.')"></p>
+                      <template x-if="isScopedDecision(memory) && memory.decision_history && memory.decision_history.length > 0">
+                        <div class="flex flex-col gap-1.5">
+                          <p class="text-xs font-medium muted">${t("替换链上的旧决定", "Earlier superseded decisions")}</p>
+                          <template x-for="prev in memory.decision_history" :key="prev.id">
+                            <div class="pt-2 text-[13px] leading-6" style="border-top: 1px solid var(--div)">
+                              <div class="flex flex-wrap items-center gap-2 text-xs muted">
+                                <span x-text="L('决定于 ', 'Decided ') + fmt(prev.valid_as_of || prev.created_at)"></span>
+                                <span class="mono" x-text="prev.id"></span>
+                              </div>
+                              <p class="whitespace-pre-wrap" x-text="prev.content"></p>
+                            </div>
+                          </template>
+                        </div>
+                      </template>
+                      <p x-show="memory.revisions && memory.revisions.length === 0 && (!isScopedDecision(memory) || !(memory.decision_history && memory.decision_history.length))" class="text-xs muted" x-text="isScopedDecision(memory) ? L('还没有更早的决定或修订。', 'No earlier decisions or revisions yet.') : L('没改写过。', 'Never edited.')"></p>
                       <template x-for="rev in (memory.revisions || [])" :key="rev.id">
                         <div class="pt-2 text-[13px] leading-6" style="border-top: 1px solid var(--div)">
                           <div class="flex flex-wrap items-center gap-2 text-xs muted">
                             <span x-text="L('写于 ', 'Written ') + fmt(rev.written_at || rev.created_at)"></span>
                             <span x-text="revisionReasonLabel(rev)"></span>
-                            <button type="button" @click="restoreMemoryRevision(memory, rev)" class="btn btn-sm ml-auto" x-text="L('恢复这版', 'Restore this')"></button>
+                            <button type="button" x-show="!isScopedDecision(memory)" @click="restoreMemoryRevision(memory, rev)" class="btn btn-sm ml-auto" x-text="L('恢复这版', 'Restore this')"></button>
                           </div>
                           <p class="whitespace-pre-wrap" x-text="rev.content"></p>
+                        </div>
+                      </template>
+                      <template x-if="isScopedDecision(memory) && memory.sources">
+                        <div class="flex flex-col gap-1.5 pt-2" style="border-top: 1px solid var(--div)">
+                          <p class="text-xs font-medium muted">${t("依据原话", "Source messages")}</p>
+                          <p x-show="memory.sources.messages.length === 0" class="text-xs muted" x-text="L('未找到仍在保留期内的依据原话。', 'No retained source messages found.')"></p>
+                          <template x-for="msg in memory.sources.messages" :key="msg.id">
+                            <div class="pt-1.5 text-[13px] leading-6" style="border-top: 1px solid var(--div)">
+                              <div class="flex flex-wrap items-center gap-2 text-xs muted">
+                                <span x-text="msg.role === 'user' ? L('用户', 'User') : L('助手', 'Assistant')"></span>
+                                <span x-text="fmt(msg.created_at)"></span>
+                              </div>
+                              <p class="whitespace-pre-wrap" x-text="msg.content"></p>
+                            </div>
+                          </template>
+                          <p x-show="memory.sources.missing > 0" class="text-xs muted" x-text="L('另有 ' + memory.sources.missing + ' 条原话已过期或被删除。', memory.sources.missing + ' additional source message(s) expired or removed.')"></p>
                         </div>
                       </template>
                     </div>
@@ -999,14 +1036,15 @@ tailwind.config = { corePlugins: { preflight: false } };
                         <span class="muted" x-show="(memory.tags || []).length">tags</span><span x-show="(memory.tags || []).length" x-text="(memory.tags || []).join(', ')"></span>
                       </div>
                     </details>
-                    <div x-show="memory.mergeOpen" class="flex flex-wrap gap-2">
+                    <div x-show="!isScopedDecision(memory) && memory.mergeOpen" class="flex flex-wrap gap-2">
                       <input x-model="memory.target_id" class="field min-w-0 flex-1" :placeholder="L('并进哪一条：填它的 id', 'Merge into: its id')">
                       <button type="button" @click="mergeDuplicate(memory)" class="btn btn-sm" x-text="L('合并', 'Merge')"></button>
                     </div>
-                    <div class="flex flex-wrap gap-2">
-                      <button type="button" @click="toggleMemoryEdit(memory)" class="btn btn-sm" x-text="memory.editing ? L('取消', 'Cancel') : L('编辑', 'Edit')"></button>
-                      <button type="button" x-show="memory.editing" @click="saveMemory(memory)" class="btn btn-primary btn-sm" x-text="L('保存', 'Save')"></button>
-                      <button type="button" @click="memory.mergeOpen = !memory.mergeOpen" class="btn btn-sm" x-text="L('和别的合并', 'Merge with another')"></button>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <button type="button" x-show="!isScopedDecision(memory)" @click="toggleMemoryEdit(memory)" class="btn btn-sm" x-text="memory.editing ? L('取消', 'Cancel') : L('编辑', 'Edit')"></button>
+                      <button type="button" x-show="!isScopedDecision(memory) && memory.editing" @click="saveMemory(memory)" class="btn btn-primary btn-sm" x-text="L('保存', 'Save')"></button>
+                      <button type="button" x-show="!isScopedDecision(memory)" @click="memory.mergeOpen = !memory.mergeOpen" class="btn btn-sm" x-text="L('和别的合并', 'Merge with another')"></button>
+                      <span x-show="isScopedDecision(memory)" class="text-xs muted" x-text="L('决定记录不能直接编辑正文；要改请撤回依据原话，或重新说一次。', 'Decision records cannot be edited directly; withdraw the source message or state a new decision.')"></span>
                       <button type="button" @click="deleteMemory(memory)" class="btn btn-sm btn-danger ml-auto" x-text="L('移除', 'Remove')"></button>
                     </div>
                   </div>
@@ -3183,6 +3221,8 @@ function memoryAdmin() {
           item.draft = { content: item.content };
           item.revOpen = false;
           item.revisions = null;
+          item.decision_history = null;
+          item.sources = null;
           return item;
         });
       } catch (error) {
@@ -3420,12 +3460,13 @@ function memoryAdmin() {
       }
     },
     async deleteMemory(memory) {
-      if (!window.confirm(this.L('确认移除这条记忆？', 'Remove this memory?'))) return;
+      if (!window.confirm(this.L('移除这条记忆？引用它的已知衍生记忆也会撤回。', 'Remove this memory and withdraw known memories derived from it?'))) return;
       try {
-        await this.request(this.withNamespace('/v1/memory/' + encodeURIComponent(memory.id)), { method: 'DELETE' });
+        const {data} = await this.request(this.withNamespace('/v1/memory/' + encodeURIComponent(memory.id)), { method: 'DELETE' });
         await Promise.all([this.loadMemories(), this.loadBoot()]);
         if (this.page === 'memory' && this.moreView === 'world') await this.loadWorldFacts();
-        this.notify(this.L('已移除', 'Removed'));
+        const count = (data.withdrawn_memories || []).length;
+        this.notify(this.L('已移除，连带撤回 ' + count + ' 条记忆', 'Removed. Related memories withdrawn: ' + count));
       } catch (error) {
         this.notify(error.message);
       }
@@ -4811,17 +4852,37 @@ function memoryAdmin() {
       memory.revOpen = !memory.revOpen;
       if (!memory.revOpen) return;
       memory.revisions = null;
+      memory.decision_history = null;
+      memory.sources = null;
       try {
         const data = await this.request(this.withNamespace('/v1/memories/' + encodeURIComponent(memory.id) + '/revisions'));
         memory.revisions = data.data || [];
+        memory.decision_history = data.decision_history || [];
+        memory.sources = data.sources || null;
       } catch (error) {
         memory.revisions = [];
+        memory.decision_history = [];
         this.notify(error.message);
       }
     },
+    isScopedDecision(memory) {
+      return Boolean(memory && (memory.source === 'scoped_decision' || (memory.type === 'decision' && String(memory.fact_key || '').startsWith('decision:'))));
+    },
+    decisionScopeLabel(memory) {
+      return String((memory && memory.fact_key) || '').replace(/^decision:/, '') || '—';
+    },
+    decisionBadge(memory) {
+      const scope = this.decisionScopeLabel(memory);
+      const day = this.shortDate((memory && (memory.valid_as_of || memory.created_at)) || '');
+      return this.L('当前决定 · ', 'Current decision · ') + scope + (day ? ' · ' + day : '');
+    },
+    outdatedNotice(memory) {
+      const day = this.shortDate((memory && memory.current_state && memory.current_state.as_of) || '');
+      return this.L('现状说法已被 ' + (day || '较新') + ' 的决定更新', 'Current status updated by a decision from ' + (day || 'later'));
+    },
     revisionReasonLabel(rev) {
-      const zh = { fact_key_upsert: '同一个 key 再写一遍时被改', edit: '手动改的', candidate_merge: '审核合并时被改' };
-      const en = { fact_key_upsert: 'Changed when the same key was written again', edit: 'Edited by hand', candidate_merge: 'Changed by a merge in Review' };
+      const zh = { fact_key_upsert: '同一个 key 再写一遍时被改', edit: '手动改的', candidate_merge: '审核合并时被改', late_evidence: '晚到的早期决定证据' };
+      const en = { fact_key_upsert: 'Changed when the same key was written again', edit: 'Edited by hand', candidate_merge: 'Changed by a merge in Review', late_evidence: 'Late earlier decision evidence' };
       const reason = (this.lang === 'en' ? en : zh)[rev.reason] || rev.reason || '';
       return reason + (rev.replaced_by ? this.L('（改它的：', ' (by ') + rev.replaced_by + this.L('）', ')') : '');
     },

@@ -13,6 +13,7 @@ export interface ExtractedMemory {
   context_dates?: string[];
   attributed_role?: "user" | "assistant";
   evidence_quote?: string;
+  decision?: import("./currentState/scopeKey").ScopedDecision;
   fact_key?: string;  // v2: model can provide fact_key for upsert dedup
 }
 

@@ -341,3 +341,9 @@ Preview upgrades also apply 0025. A preview digest sometimes copied the entire b
 Migration 0026 also removes similarity-only predecessor edges from identifiable preview approvals and revisions. The version chain still records which entry they replaced.
 
 Migration 0027 narrows the pre-provenance edge in `memory_derivations` to rows that list a single message, so withdrawing an unrelated line from an old Dream batch no longer hides the other memories made from that batch.
+
+### Current user decisions
+
+`CURRENT_STATE_PROJECTION` (switch, defaults to off; accepts `on`, `true`, `1`) enables scoped user decisions during Dream and annotates active recall and gateway recall. Dream proposes a `decision:user/<context>/<property>` key. The write checks the captured user speech, verbatim quote, selected value and timestamp before committing. An older observation is stored as a revision (`late_evidence`). Withdrawing the current decision's source leaves earlier versions historical. Recall preserves an authored note's wording, with the date attached to outdated wording in the gateway. Scoped decision records are read-only in the admin memory page and REST `PATCH`; update them by withdrawing the source message or recording a new user decision.
+
+The setting defaults to off. `RECALL_PROVENANCE_SELECTION=false` also disables projection. P1 uses the existing schema. Hard deletion returns `withdrawn_memories` in the response, an array of other affected memory IDs.

@@ -48,6 +48,7 @@ import {
 import { parseJudgeNote, undoJudgeDecision } from "../memory/candidateJudge";
 import { handleMemoryRevisions } from "./transfer";
 import { isClefReviewOn } from "../memory/clefJudge";
+import { attachCurrentStateMeta, isScopedDecisionRecord } from "../memory/currentState/store";
 import { withImpressionDisclaimer } from "../memory/impression";
 import { isV2Enabled, runRecall } from "../memory/v2/recall";
 
@@ -178,7 +179,7 @@ async function handleListMemories(request: Request, env: Env, profile: KeyProfil
   });
 
   return json({
-    data: page.records.map((record) => toMemoryApiRecord(record)),
+    data: await attachCurrentStateMeta(env.DB, namespace, page.records),
     paging: {
       limit,
       cursor: page.nextOffset === null ? null : String(page.nextOffset),
@@ -1076,6 +1077,13 @@ export async function handleMemoryCandidates(request: Request, env: Env): Promis
     if (!targetId) return openAiError("target_id is required", 400);
     const target = await getMemoryById(env.DB, { namespace, id: targetId });
     if (!target) return openAiError("Target memory not found", 404);
+    if (isScopedDecisionRecord(target)) {
+      return openAiError(
+        "Scoped decision records cannot be edited directly; withdraw the source message or record a new decision instead.",
+        409,
+        "scoped_decision_immutable"
+      );
+    }
     const mergedContent = content || target.content;
     const updatedTarget = await updateMemory(env.DB, {
       namespace,
@@ -1161,6 +1169,13 @@ async function handlePatchMemory(
   const namespace = resolveNamespace(profile, body.namespace);
   const existing = await getMemoryById(env.DB, { namespace, id });
   if (!existing || existing.namespace !== namespace) return openAiError("Memory not found", 404);
+  if (isScopedDecisionRecord(existing)) {
+    return openAiError(
+      "Scoped decision records cannot be edited directly; withdraw the source message or record a new decision instead.",
+      409,
+      "scoped_decision_immutable"
+    );
+  }
 
   const patch = {
     provenance: explicitWrite(profile, "rest"),
@@ -1210,14 +1225,15 @@ async function handleDeleteMemory(
     const legacy = env.VECTORIZE ? await getVectorMemory(env, id) : null;
     if (!legacy || legacy.namespace !== namespace) return openAiError("Memory not found", 404);
     const deletedLegacyVector = await deleteVectorMemory(env, id);
-    if (deletedLegacyVector) return json({ data: { id, deleted: true, source: "legacy_vectorize" } });
+    if (deletedLegacyVector) return json({ data: { id, deleted: true, source: "legacy_vectorize", withdrawn_memories: [] } });
     return openAiError("Memory not found", 404);
   }
 
-  try { await invalidateKnownInputs(env, { namespace, id }, "memory"); }
+  let report: Awaited<ReturnType<typeof invalidateKnownInputs>>;
+  try { report = await invalidateKnownInputs(env, { namespace, id }, "memory"); }
   catch { return openAiError("Memory cleanup incomplete; retry deletion", 503); }
   await softDeleteMemory(env.DB, { namespace, id });
-  return json({ data: { id: existing.id, vector_id: existing.vector_id, deleted: true } });
+  return json({ data: { id: existing.id, vector_id: existing.vector_id, deleted: true, withdrawn_memories: report?.withdrawn.filter((other) => other !== id) ?? [] } });
 }
 
 async function handleGetMemory(request: Request, env: Env, profile: KeyProfile, id: string): Promise<Response> {
@@ -1228,7 +1244,8 @@ async function handleGetMemory(request: Request, env: Env, profile: KeyProfile, 
   const memory = await getMemoryById(env.DB, { namespace, id });
 
   if (!memory || memory.namespace !== namespace) return openAiError("Memory not found", 404);
-  return json({ data: toMemoryApiRecord(memory) });
+  const [enriched] = await attachCurrentStateMeta(env.DB, namespace, [memory]);
+  return json({ data: enriched });
 }
 
 export async function handleMemories(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {

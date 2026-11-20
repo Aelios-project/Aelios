@@ -54,7 +54,7 @@ export async function applyDreamV2(
   if (isReview) {
     queuedCandidates += await queueDreamExtractedMemories(env, {
       namespace,
-      memories: extracted,
+      memories: extracted, digestDecisions: digest.decisions, contextIds: input.contextMemoryIds,
       messageIds
     });
     await recordDreamReviewProposal(env, { namespace, dateLabel, digest, messageIds });
@@ -63,7 +63,7 @@ export async function applyDreamV2(
 
   queuedCandidates += await queueDreamExtractedMemories(env, {
     namespace,
-    memories: extracted,
+    memories: extracted, digestDecisions: digest.decisions, contextIds: input.contextMemoryIds,
     messageIds
   });
 
@@ -129,6 +129,7 @@ export async function applyDreamV2(
         errors.push({ target_id: item.target_id, reason: "target_not_found" });
         continue;
       }
+      if (target.source === "scoped_decision") continue;
       const inheritedFactKey = await resolveMemoryFactKey(env, item.target_id, namespace);
       await createMemoryCandidate(env.DB, {
         namespace,
@@ -154,7 +155,7 @@ export async function applyDreamV2(
   for (const item of memoriesToDelete) {
     try {
       const existing = await getVectorMemory(env, item.target_id, { requireD1Backing: true });
-      if (!existing || existing.namespace !== namespace || existing.status !== "active" || existing.pinned) continue;
+      if (!existing || existing.namespace !== namespace || existing.status !== "active" || existing.pinned || existing.source === "scoped_decision") continue;
 
       await createMemoryCandidate(env.DB, {
         namespace,

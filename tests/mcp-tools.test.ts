@@ -150,9 +150,29 @@ test("forget archives by default and erases only when asked", async () => {
   assert.equal(row("memory_candidates","c-m-a").status, "discarded");
   assert.equal(row("memory_candidates","c-m-b").status, "pending");
   assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM memory_revocations").get()?.n, 0);
-  assert.equal((await call("forget", { id: "m-b", permanent: true })).structuredContent.data.deleted, true);
+  memory("m-linked", "A supported derivative");
+  sqlite.prepare("UPDATE memories SET provenance=? WHERE id='m-linked'").run(JSON.stringify({inputs:["memory:m-b"]}));
+  const deletion = (await call("forget", { id: "m-b", permanent: true })).structuredContent.data;
+  assert.equal(deletion.deleted, true);
+  assert.deepEqual(deletion.withdrawn_memories, ["m-linked"]);
   assert.equal(row("memories", "m-b"), undefined);
   assert.equal((await call("forget", { id: "nope" })).isError, true);
+});
+
+test("REST permanent deletion reports only the other memories withdrawn with it", async () => {
+  memory("m-root", "The source memory");
+  memory("m-derived", "A supported derivative");
+  memory("m-reader", "Only read the same context");
+  sqlite.prepare("UPDATE memories SET provenance=? WHERE id='m-derived'").run(JSON.stringify({ inputs: ["memory:m-root"] }));
+  sqlite.prepare("UPDATE memories SET provenance=? WHERE id='m-reader'").run(JSON.stringify({ inputs: [], context_refs: ["memory:m-root"] }));
+  const response = await worker.fetch(new Request("https://aelios.test/v1/memories/m-root", {
+    method: "DELETE", headers: { authorization: "Bearer owner-key" },
+  }), env, { waitUntil() {} } as any);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { data: {
+    id: "m-root", vector_id: "mem_m-root", deleted: true, withdrawn_memories: ["m-derived"],
+  } });
+  assert.equal(row("memories", "m-reader").status, "active");
 });
 
 test("log_conversation opens its own conversation and skips lines it already has", async (t) => {
