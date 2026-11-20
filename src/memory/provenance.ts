@@ -14,6 +14,16 @@ export interface MemoryProvenance {
   inputs?: string[];
   context_refs?: string[];
   candidate_id?: string;
+  dream_date?: string;
+  evidence_at?: string;
+  provisional_recall_baseline?: number;
+  batch_ranges?: string[];
+}
+
+export function latestEvidenceTime(rows: {created_at:string}[]): string | undefined {
+  if (!rows.length) return undefined;
+  const latest = rows.reduce((time,row) => Math.max(time,Date.parse(row.created_at)), Number.NEGATIVE_INFINITY);
+  return Number.isFinite(latest) ? new Date(latest).toISOString() : undefined;
 }
 
 export function explicitWrite(

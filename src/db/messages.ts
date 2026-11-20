@@ -171,15 +171,14 @@ export async function getMessagesByIds(
 ): Promise<MessageRecord[]> {
   if (input.ids.length === 0) return [];
 
-  const placeholders = input.ids.map(() => "?").join(", ");
   const result = await db
     .prepare(
       `SELECT id, conversation_id, namespace, role, content, source, created_at, seq, capture_kind
        FROM messages
-       WHERE namespace = ? AND id IN (${placeholders})
+       WHERE namespace = ? AND id IN (SELECT value FROM json_each(?))
        ORDER BY ${MESSAGE_ORDER_SQL}`
     )
-    .bind(input.namespace, ...input.ids)
+    .bind(input.namespace, JSON.stringify(input.ids))
     .all<MessageRecord>();
   const rows = result.results ?? [];
 

@@ -1,3 +1,4 @@
+import { promoteProvisional } from "../../memory/provisional";
 import { invalidateKnownInputs } from "./revocation";
 import type { MemoryProvenance } from "../../memory/provenance";
 import { upsertMemoryEmbedding } from "../../memory/embedding";
@@ -212,6 +213,8 @@ export async function upsertMemoryByFactKey(
     .first<{ id: string; type: string | null; authored_by: string | null; response_tendency: string | null }>();
 
   if (existing) {
+    if (input.source === "judge" && input.provenance?.candidate_id)
+      throw new Error("Current memory changed during approval; retry candidate");
     // 原地改写之前先把旧文本存一版，正文没变就不存。
     await saveMemoryRevision(db, {
       namespace: input.namespace,
@@ -441,20 +444,26 @@ export async function supersedeMemory(
     authoredBy: input.authoredBy,
     responseTendency: input.responseTendency
   });
+  const inheritUsage = env.DREAM_DECISION_HISTORY === "1";
   const old = await db
     .prepare(
-      "SELECT id, status, vector_id, fact_key, type, authored_by, response_tendency FROM memories WHERE namespace = ? AND id = ?"
+      "SELECT id, status, vector_id, fact_key, type, recall_count, importance, authored_by, response_tendency FROM memories WHERE namespace = ? AND id = ?"
     )
     .bind(input.namespace, input.oldId)
     .first<{
       id: string;
       status: string;
+      recall_count:number;
+      importance:number;
       vector_id: string | null;
       fact_key: string | null;
       type: string;
       authored_by: string | null;
       response_tendency: string | null;
     }>();
+
+  const automatic = input.provenance?.creation_mode === "dream_derived" && (effectiveSource === "judge" || effectiveSource === "dream");
+  if (automatic && old?.status !== "active") throw new Error("Automatic review target is no longer active");
 
   const nextId = newId("mem");
   const nextVectorId = `mem_${nextId}`;
@@ -485,7 +494,7 @@ export async function supersedeMemory(
   if (old) {
     statements.push(
       db.prepare(`UPDATE memories SET status = 'superseded', version_status = 'superseded', superseded_by = ?, updated_at = ?
-        WHERE id = ? AND namespace = ?`).bind(nextId, now, old.id, input.namespace),
+        WHERE id = ? AND namespace = ?${automatic ? " AND status='active'" : ""}`).bind(nextId, now, old.id, input.namespace),
       db.prepare("INSERT OR IGNORE INTO memory_lifecycle (memory_id, namespace, seen_count) VALUES (?, ?, 0)")
         .bind(old.id, input.namespace),
       db.prepare("UPDATE memory_lifecycle SET superseded_by_id = ?, review_reason = ? WHERE memory_id = ?")
@@ -496,14 +505,14 @@ export async function supersedeMemory(
     db.prepare(`INSERT INTO memories (
       id, namespace, type, content, importance, confidence, status, pinned,
       tags, source, source_message_ids, vector_id, created_at, updated_at, expires_at,
-      fact_key, version_status, superseded_by, authored_by, response_tendency, provenance
-    ) VALUES (?, ?, ?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, null, ?, 'current', null, ?, ?, ?)`)
+      fact_key, version_status, superseded_by, authored_by, response_tendency, provenance, recall_count
+    ) VALUES (?, ?, ?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, null, ?, 'current', null, ?, ?, ?, ?)`)
       .bind(nextId, input.namespace,
         storedMemoryType(input.newType ?? old?.type, "fact", input.allowWorldFact || (input.newType == null && old?.type === WORLD_FACT_TYPE)),
-        input.newContent, input.importance ?? 0.6, input.confidence ?? 0.8, JSON.stringify(input.tags ?? []),
+        input.newContent, inheritUsage && old ? Math.max(old.importance, input.importance ?? old.importance) : input.importance ?? 0.6, input.confidence ?? 0.8, JSON.stringify(input.tags ?? []),
         effectiveSource, JSON.stringify(input.sourceMessageIds ?? []), nextVectorId, input.createdAt || now, now,
         newFactKey, eAxis.authoredBy ?? old?.authored_by ?? null, eAxis.responseTendency ?? old?.response_tendency ?? null,
-        JSON.stringify(provenance) ?? null),
+        JSON.stringify(provenance) ?? null, inheritUsage ? old?.recall_count ?? 0 : 0),
     db.prepare(`INSERT INTO memory_lifecycle (
       memory_id, namespace, fact_key, supersedes_id, review_reason, valid_as_of, last_seen_at, seen_count, last_injected_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL)`)
@@ -706,7 +715,7 @@ export async function deleteMemoryV2(
 
 export async function markMemoriesInjected(
   db: D1Database,
-  input: { namespace: string; ids: string[] }
+  input: { namespace: string; ids: string[]; recordRecall?: boolean }
 ): Promise<void> {
   const ids = uniqueStrings(input.ids);
   if (ids.length === 0) return;
@@ -736,6 +745,11 @@ export async function markMemoriesInjected(
     );
   }
 
+  if (input.recordRecall) {
+    statements.push(db.prepare(`UPDATE memories SET recall_count=recall_count+1,last_recalled_at=?
+      WHERE namespace=? AND status='active' AND id IN (SELECT value FROM json_each(?))`)
+      .bind(injectedAt,input.namespace,JSON.stringify(ids)), promoteProvisional(db,input.namespace,ids,true));
+  }
   for (let index = 0; index < statements.length; index += SQLITE_BIND_BATCH_SIZE) {
     await db.batch(statements.slice(index, index + SQLITE_BIND_BATCH_SIZE));
   }

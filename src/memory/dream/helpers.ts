@@ -93,6 +93,7 @@ export interface DreamRoutingPlan {
 }
 
 export type DailyDigestSkipReason =
+  | "dream_in_progress"
   | "dream_disabled"
   | "already_done"
   | "no_messages"
@@ -314,14 +315,15 @@ export function buildDreamContextQuery(messages: MessageRecord[]): string {
 // 搜索失败或无结果时，回退到原先的分页列表，保证 dream 不因此空转。
 export async function selectDreamMemoryContext(
   env: Env,
-  input: { namespace: string; messages: MessageRecord[]; limit: number }
+  input: { namespace: string; messages: MessageRecord[]; limit: number; query?: string }
 ): Promise<MemoryApiRecord[]> {
-  const query = buildDreamContextQuery(input.messages);
+  const query = input.query?.slice(0, DREAM_CONTEXT_QUERY_MAX_CHARS) ?? buildDreamContextQuery(input.messages);
   if (query) {
     try {
       const results = await searchMemories(env, {
         namespace: input.namespace,
         query,
+        skipRecallMark: true,
         topK: input.limit
       });
       const active = results.filter((record) => record.status === "active");

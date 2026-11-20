@@ -1,3 +1,4 @@
+import { promoteProvisional } from "../memory/provisional";
 import { authenticate } from "../auth/apiKey";
 import { HANDOFF_MAX, HandoffError, residentHandoffMetadata, saveResidentHandoff, validateHandoff } from "../db/v2/handoff";
 import { requireScope } from "../auth/scopes";
@@ -1161,6 +1162,12 @@ async function handlePatchMemory(
   const namespace = resolveNamespace(profile, body.namespace);
   const existing = await getMemoryById(env.DB, { namespace, id });
   if (!existing || existing.namespace !== namespace) return openAiError("Memory not found", 404);
+
+  if (body.confirm_provisional === true) {
+    await promoteProvisional(env.DB,namespace,[id]).run();
+    const confirmed = await getMemoryById(env.DB,{namespace,id});
+    return confirmed ? json({data:toMemoryApiRecord(confirmed)}) : openAiError("Memory not found",404);
+  }
 
   const patch = {
     provenance: explicitWrite(profile, "rest"),

@@ -3,6 +3,20 @@ import { DatabaseSync } from "node:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { runRecall } from "../src/memory/v2/recall.ts";
 
+// Run the same deterministic Dream/diary, decision, retention, and withdrawal fixtures used by CI.
+if (process.argv.includes("--dream")) {
+  const {spawnSync} = await import("node:child_process");
+  const result = spawnSync(process.execPath, ["--import","tsx","--test",
+    "--test-name-pattern=200-message episode|decision history ACP/SDK|14-day recurring-episode|cleanup detaches a line",
+    "tests/dream-extraction-runtime.test.ts","tests/candidate-review.test.ts","tests/raw-delete.test.ts"],
+    {encoding:"utf8",maxBuffer:8*1024*1024});
+  const output = result.stdout ?? "";
+  console.log(result.status === 0 ? output.split("\n").filter(line =>
+    /^(?:ok |# (?:per_batch |daily \{|trial active|judge active|tests |pass |fail ))/.test(line)).join("\n") : output);
+  if (result.error || result.stderr) console.error(result.error ?? result.stderr);
+  process.exit(result.status ?? 1);
+}
+
 const sqlite = new DatabaseSync(":memory:");
 for (const file of readdirSync("migrations").sort()) sqlite.exec(readFileSync(`migrations/${file}`, "utf8"));
 const hasOrigin = sqlite

@@ -416,3 +416,155 @@ test("a replayed Dream extraction does not re-enqueue an approved utterance, or 
   assert.deepEqual(origin.inputs, ["message:m1"]);
   assert.deepEqual(origin.context_refs, ["message:m2"]);
 });
+
+for (const order of [
+  [1, 2, 3],
+  [3, 1, 2],
+  [2, 1, 3]
+]) {
+  test(`decision history ACP/SDK follows cited time when processed ${order.join(",")}`, async () => {
+    const { decisionTimelines } = await import("../src/memory/dream/decisionHistory");
+    const { dreamOrigin } = await import("../src/memory/provenance");
+    env.DREAM_DECISION_HISTORY = "1";
+    env.DREAM_PROVISIONAL = "1";
+    const versions = ["用 ACP。", "因 ACP 功能不全改用 SDK。", "因 SDK 不兼容改回 ACP。"];
+    for (const day of order) {
+      const text = versions[day - 1];
+      const id = `m${day}`;
+      const at = `2026-09-0${day}T00:00:00.000Z`;
+      message(id, "user", text);
+      sqlite.prepare("UPDATE messages SET created_at=? WHERE id=?").run(at, id);
+      candidate(`c${day}`, text, { fact_key: "decision:agent-integration", source: "dream_extract" });
+      sqlite
+        .prepare("UPDATE memory_candidates SET type='decision',source_message_ids=?,provenance=? WHERE id=?")
+        .run(
+          JSON.stringify([id]),
+          JSON.stringify({
+            ...dreamOrigin([id]),
+            attributed_actor: "user",
+            evidence_relation: "paraphrase",
+            evidence_at: at
+          }),
+          `c${day}`
+        );
+      clefAnswers.push(yes());
+      assert.equal((await runCandidateJudge(env, "default")).approved, 1);
+      if (day === order[0]) sqlite.exec("UPDATE memories SET recall_count=7,importance=.92");
+    }
+    const active = sqlite.prepare("SELECT * FROM memories WHERE status='active'").all();
+    assert.equal(active.length, 1);
+    assert.equal(active[0].content, versions[2]);
+    assert.equal(active[0].recall_count, 7);
+    assert.equal(active[0].importance, 0.92);
+    assert.deepEqual(
+      (await decisionTimelines(env.DB, "default", [String(active[0].id)])).get(String(active[0].id)),
+      versions.slice(0, -1)
+    );
+    env.ENABLE_MEMORY_RERANKER = "false";
+    env.VECTORIZE.query = async () => ({
+      matches: [
+        { id: `mem_${active[0].id}`, score: 0.99, metadata: { ref_id: active[0].id, namespace: "default" } }
+      ]
+    });
+    const recall = (await mcp("recall", { query: "ACP SDK", k: 3 })).structuredContent.data;
+    assert.equal(
+      recall.hits.find((h: { id: string }) => h.id === active[0].id)?.timeline,
+      `历程：${versions.join(" → ")}`
+    );
+    if (order[0] === 3) {
+      const result = await api("/v1/candidates/c2/undo", "POST");
+      assert.equal(result.status, 200);
+      assert.equal(row("memories", String(active[0].id)).status, "active");
+      assert.deepEqual(
+        (await decisionTimelines(env.DB, "default", [String(active[0].id)])).get(String(active[0].id)),
+        versions.slice(0, 1)
+      );
+    }
+  });
+}
+
+test("provisional Dream approvals promote on two delivered recalls and on explicit confirmation", async () => {
+  const { dreamOrigin } = await import("../src/memory/provenance");
+  const { markMemoriesInjected } = await import("../src/db/v2");
+  env.DREAM_PROVISIONAL = "1";
+  env.WAKE_UP_PROVISIONAL = "1";
+  message("m1", "user", "以后每周一起散步。");
+  const make = async (id: string) => {
+    candidate(id, `每周散步 ${id}`, { source: "dream_extract" });
+    sqlite
+      .prepare("UPDATE memory_candidates SET provenance=? WHERE id=?")
+      .run(JSON.stringify(dreamOrigin(["m1"])), id);
+    clefAnswers.push(yes());
+    assert.equal((await runCandidateJudge(env, "default")).approved, 1);
+    return String(row("memory_candidates", id).target_memory_id);
+  };
+  const id = await make("first");
+  const wake = (await mcp("wake_up", {})).structuredContent.data;
+  assert.deepEqual(
+    wake.provisional.map((item: { id: string }) => item.id),
+    [id]
+  );
+  assert.ok(!wake.core.some((item: { id: string }) => item.id === id));
+  await markMemoriesInjected(env.DB, { namespace: "default", ids: [id], recordRecall: true });
+  assert.ok(JSON.parse(row("memories", id).tags).includes("provisional"));
+  await markMemoriesInjected(env.DB, { namespace: "default", ids: [id], recordRecall: true });
+  assert.deepEqual(JSON.parse(row("memories", id).tags), []);
+  const second = await make("second");
+  await mcp("keep_moment", { content: "周末的约定", memory_id: second });
+  assert.deepEqual(JSON.parse(row("memories", second).tags), []);
+  const active = (await mcp("remember", { content: "亲笔说我们每周散步。" })).structuredContent.data.id;
+  assert.ok(!JSON.parse(row("memories", active).tags).includes("provisional"));
+});
+
+test("14-day recurring-episode simulation tracks active growth and retained milestones", async (t) => {
+  const { dreamOrigin } = await import("../src/memory/provenance");
+  const topics = [
+    ["nickname", "第一次叫了小九。"],
+    ["walk", "约好每周散步。"],
+    ["meeting", "两人第一次见面。"]
+  ];
+  for (const trial of [false, true]) {
+    const namespace = trial ? "trial" : "judge";
+    env.DREAM_PROVISIONAL = trial ? "1" : "0";
+    const growth: number[] = [];
+    for (let day = 1; day <= 14; day++) {
+      for (const [index, [key, content]] of topics.entries()) {
+        if (day <= index) continue;
+        const id = `${namespace}-${day}-${key}`;
+        const at = `2026-09-${String(day).padStart(2, "0")}T12:00:00Z`;
+        sqlite
+          .prepare(
+            "INSERT INTO messages(id,conversation_id,namespace,role,content,created_at) VALUES(?,'test',?,'user',?,?)"
+          )
+          .run(id, namespace, content, at);
+        sqlite
+          .prepare(`INSERT INTO memory_candidates(id,namespace,content,type,source,status,source_message_ids,fact_key,provenance,created_at,updated_at)
+          VALUES(?,?,?,'relationship','dream_extract','pending',?,?,?,?,?)`)
+          .run(
+            `c-${id}`,
+            namespace,
+            content,
+            JSON.stringify([id]),
+            key,
+            JSON.stringify({ ...dreamOrigin([id]), dream_date: at.slice(0, 10), evidence_at: at }),
+            at,
+            at
+          );
+        clefAnswers.push(yes());
+      }
+      assert.equal((await runCandidateJudge(env, namespace)).failed, 0);
+      growth.push(
+        Number(
+          sqlite.prepare("SELECT COUNT(*) n FROM memories WHERE namespace=? AND status='active'").get(namespace)?.n
+        )
+      );
+    }
+    assert.deepEqual(growth, [1, 2, ...Array(12).fill(3)]);
+    const contents = sqlite
+      .prepare("SELECT content FROM memories WHERE namespace=? AND status='active'")
+      .all(namespace)
+      .map((r) => r.content);
+    assert.deepEqual(contents.sort(), topics.map(([, content]) => content).sort());
+    t.diagnostic(`${namespace} active=${growth.join(",")} retained=3/3`);
+  }
+});

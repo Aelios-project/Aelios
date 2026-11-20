@@ -32,6 +32,7 @@ export async function applyDreamV2(
     digest: DailyDigestResult;
     messageIds: string[];
     contextMemoryIds?: string[];
+    writeDraft?: boolean;
     extracted: ExtractedMemory[];
   }
 ): Promise<{
@@ -55,7 +56,7 @@ export async function applyDreamV2(
     queuedCandidates += await queueDreamExtractedMemories(env, {
       namespace,
       memories: extracted,
-      messageIds
+      dateLabel, messageIds
     });
     await recordDreamReviewProposal(env, { namespace, dateLabel, digest, messageIds });
     return { added: 0, updated: 0, deleted: 0, queuedCandidates, longtail: 0, errors: [] };
@@ -64,7 +65,7 @@ export async function applyDreamV2(
   queuedCandidates += await queueDreamExtractedMemories(env, {
     namespace,
     memories: extracted,
-    messageIds
+    dateLabel, messageIds
   });
 
   for (const item of digest.memories_to_add ?? []) {
@@ -178,7 +179,7 @@ export async function applyDreamV2(
     }
   }
 
-  await upsertDailyLog(env.DB, {
+  if (input.writeDraft !== false) await upsertDailyLog(env.DB, {
     namespace,
     date: dateLabel,
     title: digest.title ?? dateLabel,
@@ -200,6 +201,7 @@ export async function runLifecyclePhase(
     digest: DailyDigestResult;
     messageIds: string[];
     contextMemoryIds?: string[];
+    writeDraft?: boolean;
     extracted: ExtractedMemory[];
   }
 ): Promise<Awaited<ReturnType<typeof applyDreamV2>>> {

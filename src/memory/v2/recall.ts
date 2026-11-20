@@ -1,3 +1,5 @@
+import { decisionTimelines } from "../dream/decisionHistory";
+import { isProvisional } from "../provisional";
 import { listMemoryRevisions } from "../../db/v2/revisions";
 import { parseStringArray } from "../../utils/parse";
 // Aelios 记忆库 v2 召回管线 (母帖 #11 第 2/3 步)
@@ -338,7 +340,8 @@ export interface RecallInput {
 
 export interface RecallHit {
   revision_of?: string;
-  provenance?: Omit<MemoryProvenance, "inputs" | "context_refs" | "candidate_id">;
+  timeline?: string;
+  provenance?: Omit<MemoryProvenance, "inputs" | "context_refs" | "candidate_id" | "dream_date" | "batch_ranges" | "provisional_recall_baseline">;
   version_status?: string | null;
   id: string;
   content: string;
@@ -447,7 +450,7 @@ export async function runRecall(env: Env, input: RecallInput): Promise<RecallRes
     includeHistory: history === true,
     waitUntil: input.waitUntil,
     grounded: input.grounded !== false,
-    skipRecallMark: input.skip_inject_mark === true || input.grounded === false
+    skipRecallMark: env.DREAM_PROVISIONAL === "1" || input.skip_inject_mark === true || input.grounded === false
   });
   // 复制一份：下面触发器通道会往池子里 push，不要改到 searchResult 自己的数组。
   const rawMemories: MemoryApiRecordWithProvenance[] = [...searchResult.records];
@@ -509,6 +512,9 @@ export async function runRecall(env: Env, input: RecallInput): Promise<RecallRes
     const rawScore = m.score ?? 0;
     const authored = m.authored_by ?? null;
     const origin = m.provenance;
+    const configuredWeight = Number(env.PROVISIONAL_WEIGHT || 0.6);
+    const trialWeight = env.DREAM_PROVISIONAL === "1" && isProvisional(m)
+      ? (Number.isFinite(configuredWeight) ? Math.max(0,Math.min(1,configuredWeight)) : 0.6) : 1;
     const namedWrite = writes && origin?.creation_mode === "agent_explicit" && origin.claimed_author && query.toLowerCase().includes(origin.claimed_author.toLowerCase());
     const decisionWeight = userDecision && origin?.attributed_actor === "user" &&
       origin.evidence_relation !== "interpretation" ? 1.3 : namedWrite ? 1.15 : 1;
@@ -519,7 +525,7 @@ export async function runRecall(env: Env, input: RecallInput): Promise<RecallRes
       id: m.id,
       content: m.content,
       type: m.type,
-      score: rawScore * decay * (authored ? boost : 1) * decisionWeight,
+      score: rawScore * decay * (authored ? boost : 1) * decisionWeight * trialWeight,
       raw_score: rawScore,
       source_layer: "memory" as const,
       source: m.source ?? null,
@@ -604,7 +610,8 @@ export async function runRecall(env: Env, input: RecallInput): Promise<RecallRes
   if (memoryIdsToMark.length > 0 && !input.skip_inject_mark) {
     const markPromise = markMemoriesInjected(env.DB, {
       namespace: input.namespace,
-      ids: memoryIdsToMark
+      ids: memoryIdsToMark,
+      recordRecall: env.DREAM_PROVISIONAL === "1"
     });
     if (input.waitUntil) {
       input.waitUntil(markPromise);
@@ -630,6 +637,14 @@ export async function runRecall(env: Env, input: RecallInput): Promise<RecallRes
     }
   }
 
+  if (explicit && env.DREAM_DECISION_HISTORY === "1") {
+    const decisions = allHits.filter(hit => hit.type === "decision" && hit.source_layer === "memory" && hit.version_status !== "superseded");
+    const timelines = await decisionTimelines(env.DB, input.namespace, decisions.map(hit => hit.id));
+    for (const hit of decisions) {
+      const previous = timelines.get(hit.id);
+      if (previous?.length) hit.timeline = `历程：${[...previous, hit.content].join(" → ")}`;
+    }
+  }
   if (evolution && history) {
     // In-place corrections keep the old text in the revision table. Expand only the best
     // memory, keeping that current hit and the existing k budget.

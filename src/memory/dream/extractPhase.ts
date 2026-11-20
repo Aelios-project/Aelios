@@ -1,8 +1,10 @@
+import type { MemoryCandidateRow } from "../../db/v2";
+import { readPositiveInt } from "../dreamUtils";
 import type { Env, MemoryApiRecord, MessageRecord, OpenAIChatRequest } from "../../types";
 import { callDreamModelJson, DreamModelTimeoutError } from "./modelCall";
 import { extractJsonObject } from "../../utils/parse";
-import { CHAT_MATERIAL_RULES } from "../chatMaterial";
-import { extractDreamMemoriesFromMessages } from "../dreamExtract";
+import { CHAT_MATERIAL_RULES, clipMiddle } from "../chatMaterial";
+import { extractDreamMemoriesFromMessages, formatExtractTranscript } from "../dreamExtract";
 import { readDreamMaxTokens, readDreamModel } from "../dreamEnv";
 import type { ExtractedMemory } from "../extract";
 import { loadConfig, speakersForNamespace, type DreamSpeakers } from "../../gateway/config";
@@ -137,7 +139,7 @@ function sanitizeDigestItems(raw: DailyDigestResult): { digest: DailyDigestResul
 export async function callDigestModel(
   env: Env,
   prompt: string,
-  meta: { dateLabel: string; messageCount: number; memoryCount: number; hasMore: boolean; deadlineAt?: number }
+  meta: { dateLabel: string; messageCount: number; memoryCount: number; hasMore: boolean; deadlineAt?: number; daily?: boolean }
 ): Promise<DigestModelCallResult> {
   const model = readDreamModel(env);
   if (!model) {
@@ -215,8 +217,9 @@ export async function callDigestModel(
       const json = extractJsonObject(content || reasoning);
       const shape = json as DailyDigestResult | null;
       if (!shape || typeof shape !== "object" || Array.isArray(shape)
-        || typeof shape.title !== "string" || !shape.title.trim()
-        || typeof shape.summary !== "string" || !shape.summary.trim()
+        || (meta.daily
+          ? !Array.isArray(shape.memories_to_update) || !Array.isArray(shape.memories_to_delete)
+          : typeof shape.title !== "string" || !shape.title.trim() || typeof shape.summary !== "string" || !shape.summary.trim())
         || !digestListsWellFormed(shape)) {
         console.error("dream: model returned invalid JSON", {
           date: meta.dateLabel,
@@ -272,6 +275,7 @@ export async function runExtractPhase(
     endIso: string;
     messages: MessageRecord[];
     existingMemories: MemoryApiRecord[];
+    ledger?: MemoryCandidateRow[];
     hasMore: boolean;
   }
 ): Promise<{
@@ -290,29 +294,35 @@ export async function runExtractPhase(
   const deadlineAt = Date.now() + EXTRACT_PHASE_BUDGET_MS;
   const speakers = speakersForNamespace(await loadConfig(env), input.namespace);
 
+  const daily = env.DREAM_DIGEST_MODE === "daily";
+  const useBudget = daily || Boolean(env.DREAM_BATCH_CHARS);
+  const budget = Math.max(256, readPositiveInt(env.DREAM_BATCH_CHARS || undefined, 24_000, 100_000));
+  if (useBudget && messages.length > 1 && formatExtractTranscript(messages, speakers).length > budget) {
+    let low = 1;
+    let high = messages.length - 1;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (formatExtractTranscript(messages.slice(0, mid), speakers).length <= budget) low = mid;
+      else high = mid - 1;
+    }
+    messages = messages.slice(0, low);
+    hasMore = true;
+  }
   for (;;) {
-    const prompt = buildDigestPrompt({
-      dateLabel: input.dateLabel,
-      startIso: input.startIso,
-      endIso: input.endIso,
-      messages,
-      existingMemories: input.existingMemories,
-      hasMore,
-      speakers
-    });
-    const modelResult = await callDigestModel(env, prompt, {
-      dateLabel: input.dateLabel,
-      messageCount: messages.length,
-      memoryCount: input.existingMemories.length,
-      hasMore,
-      deadlineAt
-    });
+    const modelResult: DigestModelCallResult = daily ? { digest: {}, model: readDreamModel(env) ?? undefined }
+      : await callDigestModel(env, buildDigestPrompt({ ...input, messages, hasMore, speakers }), {
+        dateLabel: input.dateLabel, messageCount: messages.length, memoryCount: input.existingMemories.length,
+        hasMore, deadlineAt
+      });
     let extractResult: Awaited<ReturnType<typeof extractDreamMemoriesFromMessages>> | undefined;
     if (modelResult.digest) {
       extractResult = await extractDreamMemoriesFromMessages(env, {
         namespace: input.namespace,
         messages,
         speakers,
+        ledger: input.ledger,
+        transcript: useBudget && messages.length === 1 && formatExtractTranscript(messages, speakers).length > budget
+          ? clipMiddle(formatExtractTranscript(messages, speakers), budget - 40) : undefined,
         dateLabel: input.dateLabel,
         deadlineAt
       });

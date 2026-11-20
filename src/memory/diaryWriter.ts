@@ -568,13 +568,21 @@ export async function runDiaryWriter(
   const existing = await getDailyLog(env.DB, { namespace, date: dateLabel, includeInputs: true });
   const existingDraft = existing ? { title: existing.title, summary: existing.summary } : null;
   const speakers = await loadSpeakersForNamespace(env, namespace);
+  // Short exchanges can fit in one diary prompt even on a 200-message day. An explicit
+  // segment size still wins; a failed single call on a compact day falls back to the existing segments.
   const segments = splitDiarySegments(messages, readDiarySegmentSize(env));
-  const segmentCount = segments.length > 1 ? segments.length : undefined;
-
-  const outcome =
-    segments.length > 1
-      ? await writeDiaryInSegments(env, { dateLabel, segments, existingDraft, speakers })
-      : await writeDiaryInOneCall(env, { dateLabel, messages, existingDraft, speakers });
+  const compactDay = env.DREAM_DIGEST_MODE === "daily" && !env.DIARY_SEGMENT_MESSAGES && segments.length > 1
+    && formatChatMaterial(messages, role => speakerLabel(role, speakers), {floor:700}).length <=
+       readPositiveInt(env.DREAM_BATCH_CHARS || undefined, 24_000, 100_000);
+  let segmented = segments.length > 1 && !compactDay;
+  let outcome = segmented
+    ? await writeDiaryInSegments(env, { dateLabel, segments, existingDraft, speakers })
+    : await writeDiaryInOneCall(env, { dateLabel, messages, existingDraft, speakers });
+  if (!outcome.ok && compactDay) {
+    segmented = true;
+    outcome = await writeDiaryInSegments(env, { dateLabel, segments, existingDraft, speakers });
+  }
+  const segmentCount = segmented ? segments.length : undefined;
 
   if (!outcome.ok) {
     return {

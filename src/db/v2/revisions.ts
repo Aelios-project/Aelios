@@ -91,17 +91,19 @@ export async function saveMemoryRevision(
     )
     .run();
 
-  // 只留最近 MAX_REVISIONS_PER_MEMORY 版。
-  await db
+  await trimMemoryRevisions(db,current.id).run();
+  return true;
+}
+
+export function trimMemoryRevisions(db:D1Database, memoryId:string):D1PreparedStatement {
+  return db
     .prepare(
       `DELETE FROM memory_revisions
        WHERE memory_id = ? AND id NOT IN (
          SELECT id FROM memory_revisions WHERE memory_id = ? ORDER BY created_at DESC, id DESC LIMIT ?
        )`
     )
-    .bind(current.id, current.id, MAX_REVISIONS_PER_MEMORY)
-    .run();
-  return true;
+    .bind(memoryId, memoryId, MAX_REVISIONS_PER_MEMORY);
 }
 
 export async function listMemoryRevisions(

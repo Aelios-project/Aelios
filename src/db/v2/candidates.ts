@@ -267,3 +267,91 @@ export async function updateMemoryCandidateStatus(
     .run();
   return getMemoryCandidateById(db, input);
 }
+
+/** The day belongs to the conversation. Older candidates can still be located by their first surviving citation. */
+export async function listDreamDayCandidates(
+  db: D1Database,
+  input: {
+    namespace: string;
+    dateLabel: string;
+    startIso: string;
+    endIso: string;
+    pendingOnly: boolean;
+  }
+): Promise<MemoryCandidateRow[]> {
+  const rows = await db
+    .prepare(`SELECT c.* FROM memory_candidates c
+    WHERE c.namespace=?1 AND c.source='dream_extract' AND ${input.pendingOnly ? "c.status='pending'" : "c.status IN ('pending','approved')"}
+      AND (json_extract(c.provenance,'$.dream_date')=?2 OR (json_extract(c.provenance,'$.dream_date') IS NULL
+        AND EXISTS (SELECT 1 FROM messages m WHERE m.namespace=c.namespace AND m.id=json_extract(c.source_message_ids,'$[0]')
+          AND m.created_at>=?3 AND m.created_at<?4)))
+    ORDER BY c.updated_at DESC,c.id ${input.pendingOnly ? "LIMIT 30" : ""}`)
+    .bind(input.namespace, input.dateLabel, input.startIso, input.endIso)
+    .all<MemoryCandidateRow>();
+  return rows.results;
+}
+
+/** Keep prior evidence; a reviewer or another batch may have changed the candidate during inference. */
+export async function extendDreamCandidate(
+  db: D1Database,
+  input: {
+    namespace: string;
+    dateLabel: string;
+    id: string;
+    content: string;
+    sources: string[];
+    origin: MemoryProvenance;
+    range: string;
+    expectedContent?: string;
+  }
+): Promise<boolean> {
+  const row = await getMemoryCandidateById(db, input);
+  if (!row || row.status !== "pending" || row.source !== "dream_extract") return false;
+  const previous: MemoryProvenance | undefined = row.provenance ? JSON.parse(row.provenance) : undefined;
+  if (previous?.dream_date && previous.dream_date !== input.dateLabel) return false;
+  if (previous?.batch_ranges?.includes(input.range)) {
+    const known = new Set<string>(JSON.parse(row.source_message_ids ?? "[]"));
+    return input.sources.every((id) => known.has(id));
+  }
+  if (input.expectedContent !== row.content)
+    throw new Error("Candidate changed during extraction; retry the batch");
+  // A replacement that loses an earlier quoted name or promise is safer as a separate candidate.
+  for (const quote of row.content.matchAll(/「([^」]+)」/g)) {
+    if (!input.content.includes(quote[0])) return false;
+  }
+  const sources = [...new Set<string>([...JSON.parse(row.source_message_ids ?? "[]"), ...input.sources])];
+  const inputs = new Set([...(previous?.inputs ?? []), ...sources.map((id) => `message:${id}`)]);
+  const evidenceAt = [previous?.evidence_at, input.origin.evidence_at]
+    .filter((v): v is string => Boolean(v))
+    .sort()
+    .at(-1);
+  const merged = {
+    ...input.origin,
+    evidence_at: evidenceAt,
+    dream_date: input.dateLabel,
+    inputs: [...inputs],
+    attributed_actor:
+      previous?.attributed_actor === input.origin.attributed_actor ? input.origin.attributed_actor : "unknown",
+    context_refs: [...new Set([...(previous?.context_refs ?? []), ...(input.origin.context_refs ?? [])])].filter(
+      (ref) => !inputs.has(ref)
+    ),
+    batch_ranges: [...(previous?.batch_ranges ?? []), input.range]
+  };
+  const result = await db
+    .prepare(`UPDATE memory_candidates SET content=?,source_message_ids=?,provenance=?,updated_at=?
+    WHERE namespace=? AND id=? AND status='pending' AND content=? AND provenance IS ? AND source_message_ids IS ?`)
+    .bind(
+      input.content,
+      JSON.stringify(sources),
+      JSON.stringify(merged),
+      nowIso(),
+      input.namespace,
+      row.id,
+      row.content,
+      row.provenance ?? null,
+      row.source_message_ids
+    )
+    .run();
+  if (!result.meta.changes) throw new Error("Dream candidate changed during extension; retry the batch");
+  return true;
+}

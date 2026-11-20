@@ -1,3 +1,4 @@
+import { PROVISIONAL_SQL, promoteProvisional } from "../memory/provisional";
 import { chatArchiveEnabled, readChatArchiveAround, searchChatArchive } from "../db/chatArchive";
 import { authenticate } from "../auth/apiKey";
 import { HANDOFF_GUIDE, handoffRevision, readHandoff, validateHandoff, writeHandoff } from "../db/v2/handoff";
@@ -311,6 +312,7 @@ function getTools(options: ToolListOptions): Array<Record<string, unknown>> {
         type: "object",
         properties: {
           content: { type: "string", description: "The moment, in their words where it matters; readable on its own later." },
+          memory_id: {type:"string", description:"Optional memory ID confirmed by keeping this moment."},
           context_message_ids: {
             type: "array",
             items: { type: "string" },
@@ -639,9 +641,9 @@ async function callTool(
     if (!hasScope(profile, "memory:read")) return toolError("Missing memory:read scope");
     if (!isV2Enabled(env)) return toolError("wake_up requires MEMORY_LIFECYCLE_ENABLED=true");
     const namespace = resolveNamespace(profile, args.namespace);
-    const [pkg, corePage, pages, handoff] = await Promise.all([
+    const [pkg, corePage, pages, handoff, trial] = await Promise.all([
       buildBootPackage(env, { namespace }),
-      listMemoriesPage(env.DB, { namespace, status: "active", limit: CORE_MEMORY_LIMIT, offset: 0 }),
+      listMemoriesPage(env.DB, { namespace, status: "active", limit: CORE_MEMORY_LIMIT, offset: 0, excludeProvisional: env.DREAM_PROVISIONAL === "1" }),
       listNotebookPages(env.DB, { namespace }).catch((error) => {
         console.warn("wake_up: list notebook failed", error);
         return [] as NotebookPageSummary[];
@@ -649,7 +651,10 @@ async function callTool(
       readHandoff(env.DB, namespace).catch((error) => {
         console.warn("wake_up: read handoff failed", error);
         return null;
-      })
+      }),
+      env.WAKE_UP_PROVISIONAL === "1" ? env.DB.prepare(`SELECT id,type,content FROM memories WHERE namespace=?
+        AND status='active' AND created_at>=? AND ${PROVISIONAL_SQL} ORDER BY created_at DESC,id LIMIT 3`)
+        .bind(namespace,new Date(Date.now()-3*86400000).toISOString()).all() : null
     ]);
     if (pkg.precious.length > 0) {
       ctx.waitUntil(markPreciousInjected(env.DB, { namespace, ids: pkg.precious.map((p) => p.id) }));
@@ -657,7 +662,7 @@ async function callTool(
     // 置顶优先、再按重要度的前几条：官端用户日记常是空的，开场至少知道这个人是谁。
     const core = corePage.records.map((record) => ({ id: record.id, type: record.type, content: record.content }));
     const notebook = notebookNamesLine(pages);
-    return textToolResult({ data: { how_to_use: MEMORY_GUIDE, core, ...pkg, ...(notebook ? { notebook } : {}), ...(handoff && handoff.content !== null ? { handoff } : {}) } });
+    return textToolResult({ data: { how_to_use: MEMORY_GUIDE, core, ...pkg, ...(trial ? {provisional:trial.results} : {}), ...(notebook ? { notebook } : {}), ...(handoff && handoff.content !== null ? { handoff } : {}) } });
   }
 
   if (name === "handoff") {
@@ -1019,6 +1024,8 @@ async function callTool(
       content,
       contextMessageIds: readStringArray(args.context_message_ids)
     });
+    const memoryId = readString(args.memory_id);
+    if (memoryId) await promoteProvisional(env.DB, precious.namespace, [memoryId]).run();
     return textToolResult({ data: precious });
   }
 

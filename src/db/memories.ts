@@ -1,3 +1,4 @@
+import { PROVISIONAL_SQL } from "../memory/provisional";
 import type { MemoryProvenance } from "../memory/provenance";
 import type { MemoryLifecycleRow, MemoryRecord } from "../types";
 import { deleteFtsRow, searchFtsIds, upsertMemoryFts } from "../memory/fts";
@@ -25,6 +26,7 @@ export interface CreateMemoryInput {
 }
 
 export interface ListMemoryFilters {
+  excludeProvisional?: boolean;
   namespace: string;
   type?: string;
   status?: string;
@@ -123,6 +125,7 @@ export async function listMemoriesPage(db: D1Database, filters: ListMemoryFilter
     binds.push(filters.status);
   }
 
+  if (filters.excludeProvisional) sql += ` AND NOT COALESCE((${PROVISIONAL_SQL}),0)`;
   const offset = Math.max(Math.floor(filters.offset ?? 0), 0);
   const limit = Math.max(Math.floor(filters.limit), 1);
   sql += " ORDER BY pinned DESC, importance DESC, updated_at DESC LIMIT ? OFFSET ?";

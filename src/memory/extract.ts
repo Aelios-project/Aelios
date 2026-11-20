@@ -11,7 +11,12 @@ export interface ExtractedMemory {
   tags: string[];
   source_message_ids: string[];
   context_dates?: string[];
+  context_candidates?: string[];
+  extends_candidate_id?: string;
+  extends_content?: string;
+  needs_previous_quote?: boolean;
   attributed_role?: "user" | "assistant";
+  evidence_at?: string;
   evidence_quote?: string;
   fact_key?: string;  // v2: model can provide fact_key for upsert dedup
 }

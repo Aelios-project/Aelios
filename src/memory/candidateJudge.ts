@@ -5,6 +5,8 @@
 // 关掉 clef 后候选全部留着：人工在后台批，或者让助手自己用 MCP 的 memory_candidates / memory_review 审。
 // Dream 抽完候选后由 cron / 手动入口跑一轮。
 
+import { orderDreamDecision } from "./dream/decisionHistory";
+import { isProvisional } from "./provisional";
 import { getMemoryById } from "../db/memories";
 import { getMessagesByIds } from "../db/messages";
 import {
@@ -21,7 +23,7 @@ import {
   type MemoryCandidateRow
 } from "../db/v2";
 import { approvedCandidateMemory } from "../db/v2/candidates";
-import { isExplicitMemory, reviewedOrigin } from "./provenance";
+import { isExplicitMemory, parseOrigin, reviewedOrigin } from "./provenance";
 import type { Env, MessageRecord } from "../types";
 import { askClef, buildClefInput, CLEF_JUDGE_NAME, CLEF_MODEL, isClefReviewOn } from "./clefJudge";
 import { createVectorMemory } from "./vectorStore";
@@ -149,42 +151,26 @@ export async function approveCandidate(
   const provenance = reviewedOrigin(candidate, source);
   const factKey = candidate.fact_key?.trim() || null;
 
-  if (candidate.target_memory_id) {
+  const targetId = candidate.target_memory_id ?? (factKey ? (await getActiveMemoryByFactKey(env.DB,{namespace,factKey}))?.id : null);
+  const trial = env.DREAM_PROVISIONAL === "1" && source === "judge" && provenance.creation_mode === "dream_derived";
+  if (targetId) {
+    const old = trial ? await getMemoryById(env.DB,{namespace,id:targetId}) : null;
+    let evidenceIds = sourceMessageIds;
+    if (old && isProvisional({...old,tags:parseJsonArray(old.tags),provenance:parseOrigin(old.provenance)})
+      && old.content.trim() === candidate.content.trim()) {
+      evidenceIds = [...new Set([...sourceMessageIds,...parseJsonArray(old.source_message_ids)])];
+      provenance.inputs = [...new Set([...(provenance.inputs ?? []),...evidenceIds.map(id => `message:${id}`)])];
+    }
     const result = await supersedeMemory(env, {
-      namespace,
-      oldId: candidate.target_memory_id,
-      newContent: candidate.content,
-      newType: candidate.type,
-      newFactKey: factKey,
-      importance: candidate.importance,
-      confidence: candidate.confidence,
-      tags,
-      source,
-      sourceMessageIds, provenance,
-      reason: "candidate_judge_approve"
+      namespace, oldId:targetId, newContent:candidate.content, newType:candidate.type, newFactKey:factKey,
+      importance:candidate.importance, confidence:candidate.confidence, tags, source, sourceMessageIds:evidenceIds, provenance,
+      validAsOf:env.DREAM_DECISION_HISTORY === "1" ? provenance.evidence_at : undefined, reason:"candidate_judge_approve"
     });
     return result.newId;
   }
-
+  const approvalTags = trial ? [...new Set([...tags, "provisional"])] : tags;
+  if (trial) provenance.provisional_recall_baseline = 0;
   if (factKey) {
-    const existing = await getActiveMemoryByFactKey(env.DB, { namespace, factKey });
-    if (existing) {
-      const result = await supersedeMemory(env, {
-        namespace,
-        oldId: existing.id,
-        newContent: candidate.content,
-        newType: candidate.type,
-        newFactKey: factKey,
-        importance: candidate.importance,
-        confidence: candidate.confidence,
-        tags,
-        source,
-        sourceMessageIds, provenance,
-        reason: "candidate_judge_approve"
-      });
-      return result.newId;
-    }
-
     const result = await upsertMemoryByFactKey(env, {
       namespace,
       factKey,
@@ -192,9 +178,9 @@ export async function approveCandidate(
       type: candidate.type,
       importance: candidate.importance,
       confidence: candidate.confidence,
-      tags,
+      tags: approvalTags,
       source,
-      sourceMessageIds, provenance
+      sourceMessageIds, provenance, validAsOf:env.DREAM_DECISION_HISTORY === "1" ? provenance.evidence_at : undefined
     });
     return result.id;
   }
@@ -205,7 +191,7 @@ export async function approveCandidate(
     content: candidate.content,
     importance: candidate.importance,
     confidence: candidate.confidence,
-    tags,
+    tags: approvalTags,
     source,
     sourceMessageIds, provenance
   });
@@ -285,20 +271,34 @@ export async function runCandidateJudge(
       const decision = decideClef(judgeKindFor(candidate.source), judgeResult);
       const decisionNote = `${judgeNotePrefix(judgedBy)}${judgeResult.reason}`;
 
+      const pending = await getMemoryCandidateById(env.DB, {namespace, id:candidate.id});
+      if (!pending || pending.status !== "pending" || pending.content !== candidate.content ||
+          pending.provenance !== candidate.provenance || pending.source_message_ids !== candidate.source_message_ids ||
+          await targetsExplicitWrite(env.DB, namespace, pending)) {
+        kept++;
+        continue;
+      }
       if (decision === "approve") {
-        // A manual write or a forget may land while the remote judge is running.
-        const pending = await getMemoryCandidateById(env.DB, {namespace, id: candidate.id});
-        if (!pending || pending.status !== "pending" || await targetsExplicitWrite(env.DB, namespace, pending)) {
-          kept++;
-          continue;
+        let historyTarget: string | undefined;
+        if (env.DREAM_DECISION_HISTORY === "1" && candidate.type === "decision" && candidate.fact_key &&
+            parseOrigin(candidate.provenance)?.creation_mode === "dream_derived" && candidate.source !== "dream_delete") {
+          const current = await getActiveMemoryByFactKey(env.DB, {namespace,factKey:candidate.fact_key});
+          if (candidate.target_memory_id && candidate.target_memory_id !== current?.id) { kept++; continue; }
+          const target = current ? await getMemoryById(env.DB,{namespace,id:current.id}) : null;
+          if (target) {
+            const action = await orderDreamDecision(env.DB,candidate,target);
+            if (action === "pending") { kept++; continue; }
+            if (action === "history") historyTarget = target.id;
+            else candidate.target_memory_id = target.id;
+          }
         }
-        const memoryId = await approveCandidate(env, namespace, candidate, tags, sourceMessageIds);
+        const memoryId = historyTarget ?? await approveCandidate(env, namespace, candidate, tags, sourceMessageIds);
         await updateMemoryCandidateStatus(env.DB, {
           namespace,
           id: candidate.id,
           status: "approved",
           targetMemoryId: memoryId,
-          decisionNote
+          decisionNote: historyTarget ? `${decisionNote} [history_only]` : decisionNote
         });
         approved += 1;
       } else {
@@ -396,6 +396,14 @@ export async function undoJudgeDecision(
   }
   const targetId = candidate.target_memory_id;
 
+  if (candidate.decision_note?.endsWith(" [history_only]")) {
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM memory_revisions WHERE namespace=? AND id=? AND reason='dream_backfill'").bind(namespace,`rev_${candidate.id}`),
+      env.DB.prepare("UPDATE memory_candidates SET status='discarded',decision_note=?,updated_at=? WHERE namespace=? AND id=? AND status='approved'")
+        .bind(decisionNote,new Date().toISOString(),namespace,candidate.id)
+    ]);
+    return {ok:true,status:"discarded",memoryId:targetId,candidate:await getMemoryCandidateById(env.DB,{namespace,id:candidate.id})};
+  }
   if (candidate.source === "dream_delete") {
     const restored = await restoreMemory(env, { namespace, id: targetId });
     if (!restored) {

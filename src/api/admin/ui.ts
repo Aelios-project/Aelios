@@ -974,6 +974,7 @@ tailwind.config = { corePlugins: { preflight: false } };
                       <div><span class="k">${t("把握", "Confidence")}</span><span x-text="pct(memory.confidence)"></span></div>
                       <div x-show="memory.supersedes_id"><span class="k">${t("取代了", "Replaced")}</span><span class="mono text-xs" x-text="memory.supersedes_id"></span></div>
                       <div x-show="memory.superseded_by_id"><span class="k">${t("被它取代", "Replaced by")}</span><span class="mono text-xs" x-text="memory.superseded_by_id"></span></div>
+                      <button type="button" class="link text-left" x-show="(memory.tags || []).includes('provisional') && memory.provenance?.provisional_recall_baseline != null" @click="confirmProvisional(memory)" x-text="L('确认这条记忆', 'Confirm this memory')"></button>
                       <div><span class="k">${t("历史", "History")}</span><button type="button" @click="toggleMemoryRevisions(memory)" class="link text-left" x-text="memory.revOpen ? L('收起旧版', 'Hide versions') : L('看旧版', 'See versions')"></button></div>
                     </div>
                     <div x-show="memory.revOpen" class="flex flex-col gap-2 rounded-[10px] p-3" style="background: var(--soft)">
@@ -3392,6 +3393,14 @@ function memoryAdmin() {
         this.notify(error.message);
       }
       this.saving = false;
+    },
+    async confirmProvisional(memory) {
+      try {
+        await this.request(this.withNamespace('/v1/memory/' + encodeURIComponent(memory.id)), {
+          method: 'PATCH', body: JSON.stringify({ namespace: this.namespace, confirm_provisional: true })
+        });
+        await this.loadMemories();
+      } catch (error) { this.notify(error.message); }
     },
     async saveMemory(memory) {
       try {

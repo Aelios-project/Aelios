@@ -335,3 +335,20 @@ Dream 沿用原来的抽取批次和审核队列。新抽取要把角色和引�
 **迁移与回退。** 新 Worker 需要按编号应用增量迁移，包括 `0023_memory_provenance.sql` 和 `0024_dream_evidence.sql`。它给现有表增加可空字段，并建立 ID 撤销表、索引、视图与写入保护。旧行原样可读，无需全库重建向量。若主动召回质量或耗时回退，在现有设置里关闭 `RECALL_PROVENANCE_SELECTION` 可恢复旧的排序与主动证据查询行为。保留迁移和撤销记录；回退整个 Worker 会同时回退应用层的遗忘过滤。
 
 Preview upgrades also apply 0025. A preview digest sometimes copied the entire batch into its diary citation list. Where that list cannot be distinguished from a diary citing every line, the old text and IDs stay in storage for audit. The diary is hidden until backfill can rebuild it from surviving messages.
+
+### Dream v3 experiments
+
+These settings are opt-in. Apply migrations through 0026 before enabling them.
+
+| Setting | Behavior |
+| --- | --- |
+| `DREAM_DIGEST_MODE=daily` | Extract and queue each batch, checkpoint it, then tidy the day's pending and approved candidates against existing memories once. Diary title and prose come from the diary writer. `per_batch` is the default. |
+| `DREAM_BATCH_CHARS` | Character budget for formatted chat (24,000 in daily mode). The message limit still applies. A single overlong message keeps its head and tail. An explicit budget also enables this batching in per-batch mode. A compact day fits in one diary call under daily mode. Long days, expressly configured diary segments, and compact-day failures use the existing segment writer. |
+| `DREAM_EPISODE_LEDGER=1` | Extract sees up to 30 pending Dream candidates in the same space and local transcript day. An extension retains the existing quoted passages, combines evidence, and records the processed message range. Other dates, spaces and approved candidates cannot be extended. |
+| `DREAM_PROVISIONAL=1` | Newly created Dream memories admitted by the existing automatic judge start with the provisional tag. Explicit writes are exempt. Two delivered recalls promote a trial, as do explicit confirmation in the memory detail and an explicit `keep_moment(memory_id)`. An approved successor retains the normal version chain. |
+| `PROVISIONAL_WEIGHT`, `WAKE_UP_PROVISIONAL=1` | Trial ranking defaults to 0.6. The optional field in the existing MCP wake_up response shows up to three recent trials from the past three days. |
+| `DREAM_DECISION_HISTORY=1` | For accepted same-key changes of decision, compare the last cited message time. An earlier supported user decision goes into existing revisions, a later one supersedes the current version. Ties, missing chronology, unverified attribution and protected targets stay pending. Supersession carries usage and importance. Active recall can include a timeline with up to three predecessors. |
+
+The current Clef admission criteria still apply. A grounded-only admission rule, trial expiration schedule and a new conflict route for authored memories await policy decisions. A source that aged out before its time was recorded cannot reliably order a backfill. A ledger entry with no surviving date or source ID stays outside the daily material.
+
+Run `node --import tsx scripts/bench-memory-continuity.mjs --dream` for the fixed conversation, decision-order, 14-day recurring-topic and withdrawal samples. Scores and generated text are scripted locally. The reported generation counts include extract, digest and diary. Embedding, Clef classification and optional enrichment jobs are separate operations.

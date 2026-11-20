@@ -424,13 +424,15 @@ function createMockD1() {
           const lc = state.lifecycle.get(memoryId);
           return lc ? { fact_key: lc.fact_key ?? null } : null;
         }
-        if (normalized.includes("SELECT id, status, vector_id, fact_key, type, authored_by, response_tendency FROM memories WHERE namespace = ? AND id = ?")) {
+        if (normalized.includes("SELECT id, status, vector_id, fact_key, type, recall_count, importance, authored_by, response_tendency FROM memories WHERE namespace = ? AND id = ?")) {
           const [namespace, id] = binds;
           const row = getById(id);
           if (!row || row.namespace !== namespace) return null;
           return {
             id: row.id,
             status: row.status,
+            recall_count: row.recall_count ?? 0,
+            importance: row.importance,
             vector_id: row.vector_id,
             fact_key: row.fact_key,
             type: row.type,

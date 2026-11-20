@@ -139,7 +139,7 @@ export async function recallPatch(
       .map((entry) => entry.id!);
     if (injectedMemoryIds.length > 0) {
       ctx.waitUntil(
-        markMemoriesInjected(env.DB, { namespace, ids: injectedMemoryIds })
+        markMemoriesInjected(env.DB, { namespace, ids: injectedMemoryIds, recordRecall: env.DREAM_PROVISIONAL === "1" })
           .catch(() => console.error("gateway recall accounting failed"))
       );
     }

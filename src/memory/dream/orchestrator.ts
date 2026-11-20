@@ -1,3 +1,6 @@
+import { DREAM_RUN_STALE_MS } from "../../db/dreamRuns";
+import { listDreamDayCandidates } from "../../db/v2";
+import { digestDayCandidates } from "./dailyPhase";
 import { listMessagesByNamespaceInRange } from "../../db/messages";
 import { readCursor, writeCursor } from "../../db/retention";
 import type { Env, MemoryApiRecord } from "../../types";
@@ -37,7 +40,7 @@ import {
   safeInsertDreamRun,
   selectDreamMemoryContext
 } from "./helpers";
-import { buildDreamRoutingPlan, runJudgePhase } from "./judgePhase";
+import { buildDreamRoutingPlan, runJudgePhase, queueDreamExtractedMemories } from "./judgePhase";
 import { runLifecyclePhase } from "./lifecyclePhase";
 
 // Re-export date/env surface so external importers of dailyDigest keep working.
@@ -83,7 +86,7 @@ export async function runDreamBackfill(
     if (cursorState.done) continue;
 
     const rawCount = await countRawMessagesForDateLabel(env.DB, { namespace, dateLabel, timeZone });
-    if (rawCount === 0) continue;
+    if (rawCount === 0 && !(env.DREAM_DIGEST_MODE === "daily" && cursorState.after)) continue;
 
     const result = await runDailyMemoryDigest(env, namespace, { dateLabel, trigger: "cron" });
     results.push({ dateLabel, result });
@@ -107,7 +110,24 @@ export async function runDailyMemoryDigest(
     const timeZone = readDreamTimeZone(env);
     const dateLabel = readString(options.dateLabel) || getTargetDigestDateLabel(timeZone);
     dreamRunId ??= await safeInsertDreamRun(env.DB, { namespace, dateLabel, trigger: options.trigger ?? "cron" });
-    return await performDailyMemoryDigest(env, namespace, options, { dreamRunId, timeZone, dateLabel });
+    const run = { dreamRunId, timeZone, dateLabel };
+    if (options.dryRun || (env.DREAM_DIGEST_MODE !== "daily" && env.DREAM_EPISODE_LEDGER !== "1"))
+      return await performDailyMemoryDigest(env, namespace, options, run);
+    // Cron and manual jobs can overlap for a day. An abandoned claim ages out after the job deadline.
+    const name = `dream_batch_claim:${namespace}:${dateLabel}`;
+    const token = newId("claim");
+    const claim = await env.DB.prepare(`INSERT INTO processing_cursors(name,value,updated_at) VALUES(?,?,?)
+      ON CONFLICT(name) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at WHERE updated_at<?`)
+      .bind(name,token,nowIso(),new Date(Date.now()-DREAM_RUN_STALE_MS).toISOString()).run();
+    if (!claim.meta.changes) {
+      await safeFinishDreamRun(env.DB,{id:dreamRunId,status:"skipped",reason:"dream_in_progress"});
+      return {ran:false,mode:"dream",date:dateLabel,reason:"dream_in_progress"};
+    }
+    try {
+      return await performDailyMemoryDigest(env, namespace, options, run);
+    } finally {
+      await env.DB.prepare("DELETE FROM processing_cursors WHERE name=? AND value=?").bind(name,token).run();
+    }
   } catch (error) {
     await safeFinishDreamRun(env.DB, {
       id: dreamRunId,
@@ -142,6 +162,7 @@ async function performDailyMemoryDigest(
     return { ran: false, mode: "dream", date: dateLabel, reason: "already_done", startIso, endIso, cursor };
   }
 
+  const daily = env.DREAM_DIGEST_MODE === "daily";
   const maxMessages = readDreamMaxMessages(env);
   const fetchedMessages = await listMessagesByNamespaceInRange(env.DB, {
     namespace,
@@ -149,9 +170,9 @@ async function performDailyMemoryDigest(
     endCreatedAt: endIso,
     afterCreatedAt: cursorState.after,
     afterId: cursorState.afterId,
-    limit: maxMessages
+    limit: maxMessages + 1
   });
-  if (fetchedMessages.length === 0) {
+  if (fetchedMessages.length === 0 && !(daily && cursorState.after)) {
     if (!dryRun) {
       await writeCursor(env.DB, cursorName, `done:${cursorState.after ?? startIso}`);
     }
@@ -166,15 +187,19 @@ async function performDailyMemoryDigest(
   const memoryContextLimit = readDreamMemoryContextLimit(env);
   const strategy = readDreamStrategy(env);
   const v2Enabled = isV2Enabled(env);
+  const batch = fetchedMessages.slice(0, maxMessages);
+  const day = {namespace, dateLabel, startIso, endIso};
+  const ledger = env.DREAM_EPISODE_LEDGER === "1"
+    ? await listDreamDayCandidates(env.DB, {...day, pendingOnly:true}) : undefined;
   let existingMemories: MemoryApiRecord[] = [];
   try {
-    if (v2Enabled) {
+    if (!daily && v2Enabled) {
       existingMemories = await selectDreamMemoryContext(env, {
         namespace,
-        messages: fetchedMessages,
+        messages: batch,
         limit: memoryContextLimit
       });
-    } else {
+    } else if (!daily) {
       existingMemories = (await listVectorMemories(env, {
         namespace,
         count: memoryContextLimit
@@ -183,9 +208,9 @@ async function performDailyMemoryDigest(
   } catch (error) {
     console.error("dream: failed to list existing memories", error);
   }
-  const cleanedEmptyMemories =
-    dryRun || (v2Enabled && strategy === "review") ? 0 : await cleanEmptyMemories(env, namespace);
-  const fetchedHasMore = fetchedMessages.length >= maxMessages;
+  let cleanedEmptyMemories =
+    daily || dryRun || (v2Enabled && strategy === "review") ? 0 : await cleanEmptyMemories(env, namespace);
+  const fetchedHasMore = fetchedMessages.length > maxMessages;
 
   // --- extract phase (digest model + dream extract) ---
   const extractPhase = await runExtractPhase(env, {
@@ -193,15 +218,37 @@ async function performDailyMemoryDigest(
     dateLabel,
     startIso,
     endIso,
-    messages: fetchedMessages,
+    messages: batch,
     existingMemories,
+    ledger,
     hasMore: fetchedHasMore
   });
-  const { messages, hasMore, modelResult, extractedMemories } = extractPhase;
+  const { messages, hasMore, extractedMemories } = extractPhase;
+  let { modelResult } = extractPhase;
+  let messageIds = messages.map(message => message.id);
+  const lastMessage = messages.at(-1);
+  const position = { createdAt: lastMessage?.created_at ?? cursorState.after ?? startIso, id: lastMessage?.id ?? cursorState.afterId };
+  let extractedCount = 0;
+  if (daily && !extractPhase.extractReason && (dryRun || v2Enabled)) {
+    if (!dryRun && lastMessage) {
+      extractedCount = await queueDreamExtractedMemories(env, {namespace, dateLabel, memories:extractedMemories, messageIds, strict:true});
+      await writeCursor(env.DB, cursorName, formatDreamCursor({...position, done:false}));
+    }
+    if (hasMore && !dryRun) {
+      await safeFinishDreamRun(env.DB, {id:dreamRunId, status:"ok", processedMessages:messages.length, model:modelResult.model});
+      return {ran:true, stats:{date:dateLabel, mode:"dream", processedMessages:messages.length, addedMemories:0,
+        updatedMemories:0, deletedMemories:0, queuedCandidates:extractedCount, cleanedEmptyMemories:0, cursorAdvanced:true, hasMore}};
+    }
+    if (!hasMore) {
+      if (!dryRun && strategy !== "review") cleanedEmptyMemories = await cleanEmptyMemories(env,namespace);
+      ({ existingMemories, messageIds, modelResult } = await digestDayCandidates(env, day,
+        memoryContextLimit, dryRun ? extractedMemories : []));
+    }
+  }
   const digest = modelResult.digest;
 
   if (!digest) {
-    console.error("dream: model did not return valid JSON; cursor not advanced", {
+    console.error("dream: digest incomplete", {
       reason: modelResult.reason,
       model: modelResult.model,
       status: modelResult.status
@@ -300,8 +347,6 @@ async function performDailyMemoryDigest(
     };
   }
 
-  const lastMessage = messages[messages.length - 1];
-  const messageIds = messages.map((message) => message.id);
 
   if (!v2Enabled) {
     console.error("dream: v2 lifecycle disabled; cursor not advanced", { namespace, date: dateLabel });
@@ -333,9 +378,14 @@ async function performDailyMemoryDigest(
     messages,
     digest,
     messageIds,
-    extracted: extractedMemories,
+    extracted: daily ? [] : extractedMemories,
+    writeDraft: !daily,
     contextMemoryIds: existingMemories.filter(m => m.namespace === namespace).map(m => m.id)
   });
+
+  if (daily && v2Result.errors.some(error => error.reason !== "target_not_found")) {
+    throw new Error("Daily digest writes incomplete; extraction checkpoint retained");
+  }
 
   // --- LMC-5 phases (after existing tidy; each isolated so failures don't scrap the night) ---
   let relationBuild: RelationBuildStats | undefined;
@@ -429,8 +479,7 @@ async function performDailyMemoryDigest(
 
   await writeCursor(env.DB, cursorName, formatDreamCursor({
     done: !hasMore,
-    createdAt: lastMessage.created_at,
-    id: lastMessage.id
+    ...position
   }));
 
   // LMC-5 phase report is additive audit data — never stuff into dream_runs.error
@@ -496,7 +545,7 @@ async function performDailyMemoryDigest(
       addedMemories: v2Result.added,
       updatedMemories: v2Result.updated,
       deletedMemories: v2Result.deleted,
-      queuedCandidates: v2Result.queuedCandidates,
+      queuedCandidates: extractedCount + v2Result.queuedCandidates,
       cleanedEmptyMemories,
       cursorAdvanced: true,
       hasMore,

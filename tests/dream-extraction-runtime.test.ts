@@ -3,6 +3,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { test, type TestContext } from "node:test";
 import { invalidateSettingsCache } from "../src/gateway/config";
+import { runDiaryWriterForDate } from "../src/memory/diaryWriter";
 import { runDailyMemoryDigest } from "../src/memory/dream/orchestrator";
 import { buildDigestPrompt, callDigestModel, runExtractPhase } from "../src/memory/dream/extractPhase";
 import { callDreamModelJson, DreamModelTimeoutError } from "../src/memory/dream/modelCall";
@@ -47,7 +48,7 @@ function fixture(t: TestContext, respond: (input: any, options?: any) => unknown
 
 function messages(count: number): MessageRecord[] {
   return Array.from({ length: count }, (_, i) => ({ id: `msg_${i}`, conversation_id: "synthetic", namespace: "default",
-    role: "user", content: `合成对话第 ${i} 条。`, source: "test", created_at: `${DATE}T10:00:${String(i).padStart(2, "0")}.000Z` }));
+    role: "user", content: `合成对话第 ${i} 条。`, source: "test", created_at: new Date(Date.parse(`${DATE}T10:00:00Z`) + i * 1000).toISOString() }));
 }
 function stageInput(count: number) {
   return { namespace: "default", dateLabel: DATE, startIso: `${DATE}T00:00:00.000Z`, endIso: "2026-09-19T00:00:00.000Z",
@@ -351,4 +352,182 @@ test("Dream grounds speaker and modality in the supplied batch; tool arguments a
     ]
   );
   assert.deepEqual((await run([])).memories, []);
+});
+
+test("200-message episode keeps the nickname and promise across five extraction batches", async (t) => {
+  for (const mode of ["per_batch", "daily", "daily", "daily", "daily", "daily"]) {
+    const counts = { extract: 0, digest: 0, diary: 0 };
+    const { env, sqlite } = fixture(t, (input) => {
+      if (!input.messages) return { data: [[1, 0]] };
+      const prompt = input.messages?.at(-1)?.content ?? "";
+      if (prompt.includes("私人日记") || prompt.includes("各段笔记")) {
+        counts.diary++;
+        const id = prompt.match(/\[(msg_\d+)\]/)?.[1] ?? "msg_0";
+        return {
+          response: JSON.stringify({
+            title: "合成的一天",
+            summary: "两人有了新称呼，约好了下次见面。",
+            source_message_ids: [id]
+          })
+        };
+      }
+      if (isDigest(input)) {
+        counts.digest++;
+        if (mode === "daily") {
+          assert.doesNotMatch(prompt, /原文专用标记/);
+          assert.match(prompt, /每周散步/);
+        }
+        return { response: JSON.stringify(DIGEST) };
+      }
+      counts.extract++;
+      const first = prompt.match(/\[(msg_\d+)\]/)?.[1] ?? assert.fail("missing transcript");
+      const saved = prompt.match(/<today_candidates>\n\{"id":"([^"]+)"/)?.[1];
+      return {
+        response: JSON.stringify({
+          memories: [
+            {
+              type: "relationship",
+              fact_key: "relationship:walk",
+              content: first === "msg_0" ? "首次称呼「小九」。" : "首次称呼「小九」，约好每周散步。",
+              extends_candidate_id: saved,
+              source_message_ids: [first]
+            }
+          ]
+        })
+      };
+    });
+    env.DREAM_DIGEST_MODE = mode;
+    if (mode === "daily") env.DREAM_EPISODE_LEDGER = "1";
+    const rows = messages(200).map((m, i) => ({
+      ...m,
+      content:
+        i === 0 ? "以后叫你小九。" : i % 40 === 0 ? "约好每周散步。" : "原文专用标记。我们一起看了会儿树影。"
+    }));
+    seedMessages(sqlite, rows);
+    for (let batch = 0; batch < 5; batch++) {
+      const result = await runDailyMemoryDigest(env, "default", { dateLabel: DATE });
+      assert.ok(result.ran);
+      assert.equal(result.stats.hasMore, batch < 4);
+    }
+    assert.ok((await runDiaryWriterForDate(env, "default", DATE)).ran);
+    if (mode === "daily") {
+      assert.deepEqual(counts, { extract: 5, digest: 1, diary: 1 });
+      const candidates = sqlite.prepare("SELECT * FROM memory_candidates WHERE source='dream_extract'").all();
+      assert.equal(candidates.length, 1);
+      assert.match(String(candidates[0].content), /「小九」.*每周散步/);
+      assert.equal(JSON.parse(String(candidates[0].source_message_ids)).length, 5);
+      assert.equal(JSON.parse(String(candidates[0].provenance)).batch_ranges.length, 5);
+    } else assert.deepEqual(counts, { extract: 5, digest: 5, diary: 6 });
+    t.diagnostic(`${mode} ${JSON.stringify(counts)}`);
+  }
+});
+
+test("daily digest retry uses persisted candidates without repeating extraction", async (t) => {
+  let extracts = 0;
+  let digests = 0;
+  const { env, sqlite } = fixture(t, (input) => {
+    if (!input.messages) return { data: [[1, 0]] };
+    if (!isDigest(input)) {
+      extracts++;
+      return { response: JSON.stringify(extraction()) };
+    }
+    digests++;
+    return { response: digests === 1 ? "{}" : JSON.stringify({ memories_to_update: [], memories_to_delete: [] }) };
+  });
+  env.DREAM_DIGEST_MODE = "daily";
+  seedMessages(sqlite, messages(2));
+  assert.equal((await runDailyMemoryDigest(env, "default", { dateLabel: DATE })).ran, false);
+  assert.equal(sqlite.prepare("SELECT count(*) n FROM memory_candidates").get()?.n, 1);
+  assert.ok((await runDailyMemoryDigest(env, "default", { dateLabel: DATE })).ran);
+  assert.equal(extracts, 1);
+  assert.equal(digests, 2);
+  assert.equal(sqlite.prepare("SELECT count(*) n FROM daily_log").get()?.n, 0);
+});
+
+test("daily character budget retains the suffix and extract queue failure keeps the cursor", async (t) => {
+  let seen = "";
+  const { env, sqlite } = fixture(t, (input) => {
+    seen = input.messages[1].content;
+    return { response: JSON.stringify(extraction()) };
+  });
+  env.DREAM_DIGEST_MODE = "daily";
+  env.DREAM_BATCH_CHARS = "550";
+  seedMessages(
+    sqlite,
+    messages(3).map((m) => ({ ...m, content: `${"甲".repeat(1100)}尾巴` }))
+  );
+  sqlite.exec(
+    "CREATE TRIGGER offline BEFORE INSERT ON memory_candidates BEGIN SELECT RAISE(ABORT,'offline'); END"
+  );
+  await assert.rejects(runDailyMemoryDigest(env, "default", { dateLabel: DATE }), /offline/);
+  assert.equal(sqlite.prepare("SELECT count(*) n FROM processing_cursors").get()?.n, 0);
+  sqlite.exec("DROP TRIGGER offline");
+  const result = await runDailyMemoryDigest(env, "default", { dateLabel: DATE });
+  assert.ok(result.ran);
+  assert.equal(result.stats.processedMessages, 1);
+  assert.ok(result.stats.hasMore);
+  assert.match(seen, /尾巴/);
+  assert.doesNotMatch(seen, /msg_1/);
+});
+
+test("the episode ledger exposes only pending candidates in the conversation's day and namespace", async (t) => {
+  const prompts: string[] = [];
+  const { env, sqlite } = fixture(t, (input) => {
+    if (!input.messages) return { data: [[1, 0]] };
+    if (isDigest(input)) return { response: JSON.stringify(DIGEST) };
+    prompts.push(input.messages[1].content);
+    return {
+      response: JSON.stringify({
+        memories: [{ content: "新事件", source_message_ids: ["msg_0"], extends_candidate_id: "foreign" }]
+      })
+    };
+  });
+  env.DREAM_EPISODE_LEDGER = "1";
+  seedMessages(sqlite, messages(1));
+  for (const [id, ns, day, status] of [
+    ["valid", "default", DATE, "pending"],
+    ["foreign", "other", DATE, "pending"],
+    ["yesterday", "default", "2026-09-17", "pending"],
+    ["finished", "default", DATE, "approved"]
+  ]) {
+    sqlite
+      .prepare(`INSERT INTO memory_candidates(id,namespace,content,source,status,provenance,created_at,updated_at)
+      VALUES(?,?,?,'dream_extract',?,?,?,?)`)
+      .run(id, ns, id, status, JSON.stringify({ dream_date: day }), DATE, DATE);
+  }
+  assert.ok((await runDailyMemoryDigest(env, "default", { dateLabel: DATE })).ran);
+  const material = prompts[0].split("<today_candidates>")[1].split("</today_candidates>")[0];
+  assert.match(material, /valid/);
+  assert.doesNotMatch(material, /foreign|yesterday|finished/);
+  assert.equal(
+    sqlite.prepare("SELECT content FROM memory_candidates WHERE id='foreign'").get()?.content,
+    "foreign"
+  );
+  assert.equal(sqlite.prepare("SELECT count(*) n FROM memory_candidates WHERE content='新事件'").get()?.n, 1);
+});
+
+test("overlapping daily runs share one extraction and one digest", async t => {
+  let enter!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>(resolve => { enter = resolve; });
+  const paused = new Promise<void>(resolve => { release = resolve; });
+  let calls = 0;
+  const {env,sqlite} = fixture(t, async input => {
+    if (!input.messages) return {data:[[1,0]]};
+    calls++;
+    if (isDigest(input)) return {response: JSON.stringify(DIGEST)};
+    enter();
+    await paused;
+    return {response: JSON.stringify(extraction())};
+  });
+  env.DREAM_DIGEST_MODE = "daily";
+  seedMessages(sqlite, messages(2));
+  const first = runDailyMemoryDigest(env,"default",{dateLabel:DATE});
+  await entered;
+  try {
+    const second = await runDailyMemoryDigest(env,"default",{dateLabel:DATE});
+    assert.ok(!second.ran && second.reason === "dream_in_progress");
+  } finally { release(); }
+  assert.ok((await first).ran);
+  assert.equal(calls,2);
 });

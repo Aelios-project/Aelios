@@ -55,6 +55,13 @@ export interface Env {
   ENABLE_DAILY_MEMORY_DIGEST?: string;
   DREAM_NAMESPACE?: string;
   DREAM_MAX_MESSAGES?: string;
+  DREAM_DIGEST_MODE?: string;
+  DREAM_BATCH_CHARS?: string;
+  DREAM_EPISODE_LEDGER?: string;
+  DREAM_DECISION_HISTORY?: string;
+  DREAM_PROVISIONAL?: string;
+  PROVISIONAL_WEIGHT?: string;
+  WAKE_UP_PROVISIONAL?: string;
   DREAM_MAX_RUNS?: string;
   DREAM_MAX_TOKENS?: string;
   DREAM_MODEL?: string;

@@ -1,4 +1,4 @@
-import { createMemoryCandidate } from "../../db/v2";
+import { createMemoryCandidate, extendDreamCandidate } from "../../db/v2";
 import type { Env } from "../../types";
 import { newId } from "../../utils/ids";
 import { nowIso } from "../../utils/time";
@@ -77,11 +77,23 @@ export async function recordDreamReviewProposal(
 
 export async function queueDreamExtractedMemories(
   env: Env,
-  input: { namespace: string; memories: ExtractedMemory[]; messageIds: string[] }
+  input: { namespace: string; memories: ExtractedMemory[]; messageIds: string[]; dateLabel?: string; strict?: boolean }
 ): Promise<number> {
   let queued = 0;
   for (const memory of input.memories) {
     try {
+      const range = JSON.stringify([input.messageIds[0], input.messageIds.at(-1)]);
+      const origin = { ...dreamOrigin(memory.source_message_ids, { messages: input.messageIds, dates: memory.context_dates,
+        candidates: memory.context_candidates }), attributed_actor: memory.attributed_role ?? "unknown" as const,
+        evidence_relation: memory.attributed_role ? "paraphrase" as const : "interpretation" as const,
+        dream_date: input.dateLabel, evidence_at: memory.evidence_at, batch_ranges: memory.context_candidates ? [range] : undefined };
+      if (input.dateLabel && memory.extends_candidate_id && memory.context_candidates?.includes(memory.extends_candidate_id)
+        && await extendDreamCandidate(env.DB, {namespace:input.namespace, dateLabel:input.dateLabel, id:memory.extends_candidate_id,
+          content:memory.content, expectedContent:memory.extends_content, sources:memory.source_message_ids, origin, range})) {
+        queued++;
+        continue;
+      }
+      if (memory.needs_previous_quote) continue;
       let targetMemoryId: string | null = null;
       let decisionNote: string | null = null;
       const hit = await findSimilarActiveMemory(env, {
@@ -102,14 +114,14 @@ export async function queueDreamExtractedMemories(
         importance: memory.importance,
         tags: memory.tags,
         sourceMessageIds: memory.source_message_ids,
-        provenance: { ...dreamOrigin(memory.source_message_ids, { messages: input.messageIds, dates: memory.context_dates }), attributed_actor: memory.attributed_role ?? "unknown",
-          evidence_relation: memory.attributed_role ? "paraphrase" : "interpretation" },
+        provenance: origin,
         source: "dream_extract",
         targetMemoryId,
         decisionNote
       });
       queued += 1;
     } catch (error) {
+      if (input.strict || memory.context_candidates) throw error;
       console.warn("dream: failed to queue extracted memory", {
         namespace: input.namespace,
         error: error instanceof Error ? error.message : String(error)

@@ -54,7 +54,7 @@ export function fitTranscriptTexts(
 
 // 原文里自带的 <chat>、</chat >、</ background> 之类会提前把标签合上，先改写掉。
 export function escapeChatTags(text: string): string {
-  return text.replace(/<\s*(\/?)\s*(chat|background)\b([^>]*)>/gi, "‹$1$2$3›");
+  return text.replace(/<\s*(\/?)\s*(chat|background|today_candidates)\b([^>]*)>/gi, "‹$1$2$3›");
 }
 
 export function wrapChat(transcript: string): string {
