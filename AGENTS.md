@@ -19,4 +19,5 @@ Follow [docs/setup-with-ai.md](docs/setup-with-ai.md) step by step. It starts fr
 - Node.js 22+. Install with `npm ci`.
 - Before a PR: `npm run verify` (typecheck, tests and verify scripts) and `npm run lint`. Lint must have zero errors; the existing `noNonNullAssertion` warnings are allowed. Do not bulk-fix them with Biome's autofix, which turns `x!.y` into `x?.y`.
 - Database changes are new numbered files in `migrations/`; never edit an applied migration.
+- D1 enforces limits that the SQLite used by the tests does not: at most five SELECT terms in one compound statement (`UNION`, `UNION ALL`, `INTERSECT`, `EXCEPT`), 50-byte LIKE/GLOB patterns and 100 bound parameters per query. `npm run verify` applies every migration to a throwaway local D1; keep runtime SQL within the same limits.
 - User-facing docs come in pairs: keep `README.md` and `README.zh-CN.md` in step.
