@@ -548,7 +548,9 @@ export async function runDiaryWriter(
   const week = getIsoWeekLabelForDateLabel(dateLabel, timeZone);
   const existingWeekly =
     (await getWeeklyLog(env.DB, { namespace, week })) ?? (await getFoldedWeek(env.DB, { namespace, week }));
-  if (existingWeekly) {
+  if (existingWeekly && !await env.DB.prepare(
+    "SELECT 1 FROM daily_log WHERE namespace=? AND date=? AND needs_rebuild=1"
+  ).bind(namespace,dateLabel).first()) {
     return { enabled: true, date: dateLabel, ran: false, reason: "week_already_rolled_up" };
   }
 

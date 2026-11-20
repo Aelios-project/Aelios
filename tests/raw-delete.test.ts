@@ -96,6 +96,8 @@ test("the home page's chats have a delete button that asks first, then drops the
   assert.deepEqual(calls, ["DELETE /v1/raw/gw_req_1%3Aassistant?namespace=default"]);
   assert.deepEqual(app.todayMessages.map((message: any) => message.id), ["gw_user_1"]);
   assert.equal(app.stats.today_raw_count, 1);
+  await app.deleteRaw(app.todayMessages[0],"withdraw");
+  assert.equal(calls.at(-1),"DELETE /v1/raw/gw_user_1?mode=withdraw&namespace=default");
 });
 
 test("revocation hides transitive Dream inputs before a vector failure; retry and backfill cannot revive them", async () => {
@@ -231,4 +233,30 @@ test("cleanup detaches a line; withdrawal follows citations, never batch context
   assert.equal((await del(love,"default","owner-key","withdraw")).status,200);
   assert.equal(sqlite.prepare("SELECT status FROM memories WHERE id='nick'").get()?.status,"archived");
   assert.equal(sqlite.prepare("SELECT status FROM memories WHERE id='later'").get()?.status,"active");
+});
+
+test("preview batch-wide diary citations are rebuilt from surviving raw messages", async () => {
+  const {writeDiaryAfterDream}=await import("../src/memory/diaryWriter");
+  const {getDailyLog}=await import("../src/db/v2");
+  const day="2026-09-18";
+  env.DREAM_TIME_ZONE="UTC";
+  sqlite.prepare("UPDATE messages SET created_at=?").run(`${day}T09:00:00.000Z`);
+  sqlite.prepare("INSERT INTO processing_cursors(name,value,updated_at) VALUES(?,?,'now')")
+    .run(`dream:default:${day}`,`done:${day}T10:00:00Z`);
+  sqlite.prepare(`INSERT INTO daily_log(namespace,date,title,summary,source_message_ids,input_refs,context_refs,updated_at)
+    VALUES('default',?,'draft','old private draft',?,?,?,'then')`)
+    .run(day,'["gw_user_1","gw_req_1:assistant"]','["message:gw_user_1","message:gw_req_1:assistant"]',
+      '["message:gw_user_1","message:gw_req_1:assistant","memory:context"]');
+  sqlite.exec(readFileSync("migrations/0025_preview_digest_drafts.sql","utf8"));
+  assert.equal(await getDailyLog(env.DB,{namespace:"default",date:day}),null);
+  assert.equal((await del("gw_req_1:assistant","default","owner-key","withdraw")).status,200);
+  env.AI={run:async (_model:string, input:{messages:{content:string}[]})=>{
+    const prompt=input.messages.at(-1)?.content ?? "";
+    assert.doesNotMatch(prompt,/old private draft|我不能完成这个任务/);
+    assert.match(prompt,/帮我看看这段/);
+    return {response:JSON.stringify({title:"幸存的原文",summary:"她请我帮她看看这段。",source_message_ids:["gw_user_1"]})};
+  }};
+  assert.ok((await writeDiaryAfterDream(env,"default",day)).ran);
+  const rewritten=await getDailyLog(env.DB,{namespace:"default",date:day});
+  assert.deepEqual(rewritten?.source_message_ids,["gw_user_1"]);
 });

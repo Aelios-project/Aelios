@@ -270,7 +270,7 @@ export function bindDeleteDailyLogsInRangeStatement(
   return db
     .prepare(
       `DELETE FROM daily_log
-       WHERE namespace = ?
+       WHERE namespace = ? AND needs_rebuild=0
          AND date >= ?
          AND date <= ?`
     )

@@ -333,3 +333,5 @@ Dream 沿用原来的抽取批次和审核队列。新抽取要把角色和引�
 遗忘覆盖范围取决于保存下来的关联。已经折叠且失去来源映射的历史摘要、手工 handoff、单独保存的珍贵片段和 Notebook，不能凭内容相似自动追删。已有导出、备份、请求日志、诊断记录、外部客户端缓存及已经发送给模型的内容也各有独立的生命周期。运行中的外部请求或旧汇总任务可能持有先前读出的内容。逻辑下架不提供密码学擦除保证。现有整理任务可用剩余材料重新生成摘要，缺少依据时允许留空。
 
 **迁移与回退。** 新 Worker 需要按编号应用增量迁移，包括 `0023_memory_provenance.sql` 和 `0024_dream_evidence.sql`。它给现有表增加可空字段，并建立 ID 撤销表、索引、视图与写入保护。旧行原样可读，无需全库重建向量。若主动召回质量或耗时回退，在现有设置里关闭 `RECALL_PROVENANCE_SELECTION` 可恢复旧的排序与主动证据查询行为。保留迁移和撤销记录；回退整个 Worker 会同时回退应用层的遗忘过滤。
+
+Preview upgrades also apply 0025. A preview digest sometimes copied the entire batch into its diary citation list. Where that list cannot be distinguished from a diary citing every line, the old text and IDs stay in storage for audit. The diary is hidden until backfill can rebuild it from surviving messages.
