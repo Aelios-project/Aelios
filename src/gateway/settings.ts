@@ -53,7 +53,16 @@ export const SETTINGS: SettingSpec[] = [
   { group: "Dream 与日记", name: "ENABLE_DREAM", label: "夜整总闸", labelEn: "Process chats every night", hint: "默认开。关掉完全不跑 dream。旧名 ENABLE_DAILY_MEMORY_DIGEST 只在这项没设时生效", hintEn: "On by default. Off skips the nightly run entirely. The old name ENABLE_DAILY_MEMORY_DIGEST only applies when this is unset.", kind: "switch", defaultOn: true, common: true },
   { group: "Dream 与日记", name: "DREAM_MODEL", label: "Dream 用的模型", labelEn: "Model for the nightly run", hint: "填 chatgpt/模型名 就用你的 ChatGPT 套餐（要先在上面「模型与上游」里把 ChatGPT 套餐连好）。注意夜里会连发好几轮请求，日记、周记月记也各来一次，都算在套餐额度里；额度到顶那晚这些任务就会失败。套餐线路不收输出长度上限，下面「单轮输出上限」对它不生效", hintEn: "Enter chatgpt/<model name> to use your ChatGPT plan (connect the ChatGPT plan under Models & upstream above first). Each night sends several rounds of requests, plus one each for the journal and the weekly/monthly summaries, all counted against the plan; on a night the quota runs out, these jobs fail. The plan route takes no output limit, so “Max output tokens per round” below doesn't apply to it.", common: true },
   { group: "Dream 与日记", name: "DREAM_TIME_ZONE", label: "按哪个时区分天", labelEn: "Time zone for the day boundary", hint: "例如 Asia/Singapore", hintEn: "e.g. Asia/Singapore" },
-  { group: "Dream 与日记", name: "CURRENT_STATE_PROJECTION", label: "当前决定投影（on 开启）", labelEn: "Current decision projection (on enables)" },
+  {
+    group: "Dream 与日记",
+    name: "CURRENT_STATE_PROJECTION",
+    label: "当前决定投影",
+    labelEn: "Current decision projection",
+    hint: "默认关。打开后，问「现在用什么」时把用户明确决定排在最前，并给过时记忆加提示而不改正文",
+    hintEn: "Off by default. When on, explicit user decisions rank first for current-state questions and outdated memories get a notice without changing their text.",
+    kind: "switch",
+    defaultOn: false
+  },
   { group: "Dream 与日记", name: "DREAM_MAX_MESSAGES", label: "一轮读多少条对话", labelEn: "Messages read per round" },
   { group: "Dream 与日记", name: "DREAM_MEMORY_CONTEXT_LIMIT", label: "一轮参考多少条已有记忆", labelEn: "Existing memories consulted per round" },
   { group: "Dream 与日记", name: "DREAM_MAX_RUNS", label: "每天最多跑几轮", labelEn: "Max rounds per day" },

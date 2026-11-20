@@ -13,6 +13,7 @@
 
 import { authenticate } from "../auth/apiKey";
 import { requireScope } from "../auth/scopes";
+import { getMemoryById } from "../db/memories";
 import {
   countImportCandidates,
   getImportBatch,
@@ -26,6 +27,7 @@ import {
 } from "../db/v2";
 import { isClefReviewOn } from "../memory/clefJudge";
 import { CANONICAL_MEMORY_TYPES } from "../memory/canonicalTypes";
+import { isScopedDecisionRecord, loadDecisionHistoryAndSources } from "../memory/currentState/store";
 import { readDreamModel, readDreamTimeZoneFromEnv } from "../memory/dreamEnv";
 import { loadSpeakersForNamespace } from "../memory/speakers";
 import {
@@ -352,7 +354,13 @@ export async function handleMemoryRevisions(request: Request, env: Env, profile:
   const scopeError = requireScope(profile, "memory:read");
   if (scopeError) return scopeError;
   const namespace = resolveNamespace(profile, new URL(request.url).searchParams.get("namespace"));
-  const rows = await listMemoryRevisions(env.DB, { namespace, memoryId: id });
+  const [rows, memory] = await Promise.all([
+    listMemoryRevisions(env.DB, { namespace, memoryId: id }),
+    getMemoryById(env.DB, { namespace, id })
+  ]);
+  const decisionDetail = memory && isScopedDecisionRecord(memory)
+    ? await loadDecisionHistoryAndSources(env.DB, namespace, memory)
+    : null;
   return json({
     data: rows.map((row) => ({
       id: row.id,
@@ -369,6 +377,7 @@ export async function handleMemoryRevisions(request: Request, env: Env, profile:
       replaced_by: row.replaced_by,
       reason: row.reason,
       created_at: row.created_at
-    }))
+    })),
+    ...(decisionDetail ?? {})
   });
 }

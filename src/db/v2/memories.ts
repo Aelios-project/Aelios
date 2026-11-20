@@ -433,7 +433,6 @@ export async function supersedeMemory(
     createdAt?: string | null;
     /** newType=world_fact 时存成世界知识，不收进 8 类 (storedMemoryType)。 */
     allowWorldFact?: boolean;
-    scopedDecision?: { id: string; expectedUpdatedAt?: string };
   }
 ): Promise<{ oldStatus: string; newId: string }> {
   const db = env.DB;
@@ -461,9 +460,7 @@ export async function supersedeMemory(
       response_tendency: string | null;
     }>();
 
-  const guard = input.scopedDecision;
-  const nextId = guard?.id ?? newId("mem");
-  if (guard?.expectedUpdatedAt && !old) throw new Error("Decision changed; retry");
+  const nextId = newId("mem");
   const nextVectorId = `mem_${nextId}`;
 
   // 继承 fact_key：显式 newFactKey > 旧条本体 > 侧车
@@ -485,22 +482,14 @@ export async function supersedeMemory(
 
   // A rejected candidate or a concurrent forget must roll back the entire transition.
   const statements: D1PreparedStatement[] = [];
-  const oldMatches = guard && old
-    ? " AND status='active' AND updated_at=? AND fact_key=? AND type='decision' AND authored_by IS NULL AND source='scoped_decision'"
-    : "";
-  const expected = oldMatches ? [guard?.expectedUpdatedAt, input.newFactKey] : [];
-  const insertGuard = !guard ? "" : old
-    ? " WHERE EXISTS (SELECT 1 FROM memories WHERE namespace=? AND id=? AND superseded_by=?)"
-    : " WHERE NOT EXISTS (SELECT 1 FROM memories WHERE namespace=? AND fact_key=? AND status='active')";
-  const insertGuardBinds = !guard ? [] : old ? [input.namespace, old.id, nextId] : [input.namespace, newFactKey];
   if (old) {
     statements.push(
       db.prepare(`UPDATE memories SET status = 'superseded', version_status = 'superseded', superseded_by = ?, updated_at = ?
-        WHERE id = ? AND namespace = ?${oldMatches}`).bind(nextId, now, old.id, input.namespace, ...expected),
+        WHERE id = ? AND namespace = ?`).bind(nextId, now, old.id, input.namespace),
       db.prepare("INSERT OR IGNORE INTO memory_lifecycle (memory_id, namespace, seen_count) VALUES (?, ?, 0)")
         .bind(old.id, input.namespace),
-      db.prepare(`UPDATE memory_lifecycle SET superseded_by_id = ?, review_reason = ? WHERE memory_id = ?${guard ? " AND EXISTS(SELECT 1 FROM memories WHERE id=? AND superseded_by=?)" : ""}`)
-        .bind(nextId, input.reason ?? null, old.id, ...(guard ? [old.id, nextId] : []))
+      db.prepare("UPDATE memory_lifecycle SET superseded_by_id = ?, review_reason = ? WHERE memory_id = ?")
+        .bind(nextId, input.reason ?? null, old.id)
     );
   }
   statements.push(
@@ -508,21 +497,19 @@ export async function supersedeMemory(
       id, namespace, type, content, importance, confidence, status, pinned,
       tags, source, source_message_ids, vector_id, created_at, updated_at, expires_at,
       fact_key, version_status, superseded_by, authored_by, response_tendency, provenance
-    ) ${guard ? 'SELECT' : 'VALUES ('} ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, null, ?, 'current', null, ?, ?, ?${guard ? insertGuard : ')'}`)
+    ) VALUES (?, ?, ?, ?, ?, ?, 'active', 0, ?, ?, ?, ?, ?, ?, null, ?, 'current', null, ?, ?, ?)`)
       .bind(nextId, input.namespace,
         storedMemoryType(input.newType ?? old?.type, "fact", input.allowWorldFact || (input.newType == null && old?.type === WORLD_FACT_TYPE)),
         input.newContent, input.importance ?? 0.6, input.confidence ?? 0.8, JSON.stringify(input.tags ?? []),
         effectiveSource, JSON.stringify(input.sourceMessageIds ?? []), nextVectorId, input.createdAt || now, now,
         newFactKey, eAxis.authoredBy ?? old?.authored_by ?? null, eAxis.responseTendency ?? old?.response_tendency ?? null,
-        JSON.stringify(provenance) ?? null, ...insertGuardBinds),
+        JSON.stringify(provenance) ?? null),
     db.prepare(`INSERT INTO memory_lifecycle (
       memory_id, namespace, fact_key, supersedes_id, review_reason, valid_as_of, last_seen_at, seen_count, last_injected_at
-    ) ${guard ? 'SELECT ?, ?, ?, ?, ?, ?, ?, 0, NULL WHERE EXISTS(SELECT 1 FROM memories WHERE id=?)'
-        : 'VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL)'}`)
-      .bind(nextId, input.namespace, newFactKey, old?.id ?? null, input.reason ?? null, input.validAsOf ?? null, now, ...(guard ? [nextId] : []))
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, NULL)`)
+      .bind(nextId, input.namespace, newFactKey, old?.id ?? null, input.reason ?? null, input.validAsOf ?? null, now)
   );
-  const committed = await db.batch(statements);
-  if (guard && !committed.at(-2)?.meta.changes) throw new Error("Decision changed; retry");
+  await db.batch(statements);
   // 3. 同步向量：新条目 upsert，旧条目下架
   await syncMemoryVector(env, { namespace: input.namespace, id: nextId });
   await upsertMemoryFts(env.DB, { namespace: input.namespace, memoryId: nextId, content: input.newContent });
