@@ -98,6 +98,7 @@ export type DailyDigestSkipReason =
   | "dream_disabled"
   | "already_done"
   | "no_messages"
+  | "rolling_window_busy"
   | "missing_model"
   | "model_error"
   | "model_timeout"

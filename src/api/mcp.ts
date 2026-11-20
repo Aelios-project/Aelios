@@ -4,6 +4,7 @@ import { HANDOFF_GUIDE, handoffRevision, readHandoff, validateHandoff, writeHand
 import { getOrCreateConversation } from "../db/conversations";
 import { fetchMemoriesByIds, getMemoryById, listMemoriesPage } from "../db/memories";
 import { filterUnsavedMessages, getMessagesByIds, retainedMessageIds, saveIngestMessages } from "../db/messages";
+import { scheduleRollingAfterRequest } from "../memory/rolling/inbox";
 import {
   appendNotebookPage,
   archiveMemory,
@@ -787,6 +788,7 @@ async function callTool(
       ? await saveIngestMessages(env.DB, { conversationId: conversation.id, namespace, source: "mcp",
         messages: fresh, archive: chatArchiveEnabled(env) })
       : [];
+    scheduleRollingAfterRequest(env, ctx, namespace);
     return textToolResult({
       data: { conversation_id: conversation.id, saved: ids.length, skipped: messages.length - fresh.length, message_ids: ids }
     });
@@ -959,6 +961,7 @@ async function callTool(
       source,
       messages
     });
+    scheduleRollingAfterRequest(env, ctx, namespace);
 
     return textToolResult({
       data: {

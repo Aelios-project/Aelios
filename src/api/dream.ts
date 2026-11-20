@@ -16,6 +16,7 @@ import {
 } from "../db/v2";
 import { runCandidateJudge } from "../memory/candidateJudge";
 import { writeDiaryAfterDream } from "../memory/diaryWriter";
+import { getRollingDreamStatus, getRollingHarvest } from "../memory/rolling/stats";
 import {
   countRawMessagesForDateLabel,
   getDateLabelsLookback,
@@ -26,7 +27,7 @@ import {
   runDailyMemoryDigest
 } from "../memory/dailyDigest";
 import { json, openAiError } from "../utils/json";
-import { readBoolean, readJsonObject, readString } from "../utils/request";
+import { readBoolean, readJsonObject, readString, resolveNamespace } from "../utils/request";
 import type { Env } from "../types";
 
 const DREAM_STATUS_LOOKBACK_DAYS = 7;
@@ -58,7 +59,7 @@ export async function handleDreamStatus(request: Request, env: Env): Promise<Res
   const sinceIso = new Date(Date.now() - DREAM_STATUS_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
   try {
-    const [runs, activeRun, cursors, rawMessageCounts] = await Promise.all([
+    const [runs, activeRun, cursors, rawMessageCounts, rolling] = await Promise.all([
       listDreamRunsForNamespace(env.DB, { namespace, sinceIso }),
       findActiveDreamRun(env.DB, namespace),
       Promise.all(
@@ -72,7 +73,8 @@ export async function handleDreamStatus(request: Request, env: Env): Promise<Res
           date_label: dateLabel,
           raw_messages: await countRawMessagesForDateLabel(env.DB, { namespace, dateLabel, timeZone })
         }))
-      )
+      ),
+      resolveNamespace(auth.profile, namespace) === namespace ? getRollingDreamStatus(env, namespace) : undefined
     ]);
 
     return json({
@@ -84,7 +86,8 @@ export async function handleDreamStatus(request: Request, env: Env): Promise<Res
         // Includes old unresolved rows outside the seven-day history window.
         active_run: activeRun ? describeDreamRun(activeRun) : null,
         cursors,
-        raw_message_counts: rawMessageCounts
+        raw_message_counts: rawMessageCounts,
+        rolling
       }
     });
   } catch (error) {
@@ -249,10 +252,12 @@ export async function handleDreamHarvest(request: Request, env: Env): Promise<Re
   }
 
   try {
-    const [created, dormant, candidates] = await Promise.all([
+    const range = { namespace, startIso, endIso };
+    const [created, dormant, candidates, rolling] = await Promise.all([
       listMemoriesCreatedInRange(env.DB, { namespace, startIso, endIso }),
       listMemoriesGoneDormantInRange(env.DB, { namespace, startIso, endIso }),
-      listJudgedCandidatesInRange(env.DB, { namespace, startIso, endIso, excludeSources: IMPORT_CANDIDATE_SOURCES })
+      listJudgedCandidatesInRange(env.DB, { namespace, startIso, endIso, excludeSources: IMPORT_CANDIDATE_SOURCES }),
+      resolveNamespace(auth.profile, namespace) === namespace ? getRollingHarvest(env, range) : undefined
     ]);
 
     return json({
@@ -262,7 +267,8 @@ export async function handleDreamHarvest(request: Request, env: Env): Promise<Re
         time_zone: timeZone,
         created,
         dormant,
-        candidates
+        candidates,
+        rolling
       }
     });
   } catch (error) {

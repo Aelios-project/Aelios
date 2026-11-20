@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { runRecall } from "../src/memory/v2/recall.ts";
 import { annotateCurrentState } from "../src/memory/currentState/projection.ts";
+import { runRollingBenchmark } from "./eval/rolling-memory.mjs";
 
 const sqlite = new DatabaseSync(":memory:");
 for (const file of readdirSync("migrations").sort()) sqlite.exec(readFileSync(`migrations/${file}`, "utf8"));
@@ -191,3 +192,4 @@ console.log(JSON.stringify({
   },
 }));
 sqlite.close();
+await runRollingBenchmark(latency);

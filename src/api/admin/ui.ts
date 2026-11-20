@@ -1,4 +1,5 @@
 import { chatParseBrowserScript } from "../../memory/transfer/chatParse";
+import { rollingHarvestPanel, rollingStatusPanel } from "./rolling";
 
 // 后台页面是一整串 HTML：Alpine 管交互，Tailwind CDN 只用来排版，颜色和部件都走下面的 CSS 变量。
 // 中英两套文字：静态文字写成 t('中文', 'English') 两个 span，按 <html data-lang> 只显示一个；
@@ -63,12 +64,26 @@ const SETTING_ROW = String.raw`<div class="set-row" :title="item.name">
                     <button type="button" x-show="sHint(item)" @click="toggleHint(item.name)" class="info-btn" :aria-expanded="hintOpen(item.name) ? 'true' : 'false'" :aria-label="L('说明：', 'About: ') + sLabel(item)">${I.info}</button>
                     <button type="button" x-show="item.saved" @click="saveSetting(item, '')" :disabled="item.busy" class="reset-btn" x-text="L('已改 · 恢复默认', 'Changed · Reset')"></button>
                   </div>
-                  <div x-show="hintOpen(item.name)" class="set-hint"><span x-text="sHint(item)"></span><code x-text="item.name"></code></div>
+                  <div x-show="hintOpen(item.name)" class="set-hint">
+                    <span x-text="sHint(item)"></span><code x-text="item.name"></code>
+                    <template x-if="item.kind === 'select'">
+                      <div><template x-for="option in item.options" :key="option.value">
+                        <p x-text="L(option.label, option.labelEn) + ' · ' + L(option.hint || '', option.hintEn || '')"></p>
+                      </template></div>
+                    </template>
+                  </div>
                 </div>
                 <template x-if="item.kind === 'switch'">
                   <button type="button" role="switch" :aria-checked="settingOn(item) ? 'true' : 'false'" :aria-labelledby="'lb-' + item.name" :disabled="item.busy" @click="toggleSetting(item)" class="switch" :class="settingOn(item) ? 'is-on' : ''"><span></span></button>
                 </template>
-                <template x-if="item.kind !== 'switch'">
+                <template x-if="item.kind === 'select'">
+                  <select :id="'setting-' + item.name" @change="saveSetting(item, $event.target.value)" :disabled="item.busy" class="field set-input">
+                    <template x-for="option in item.options" :key="option.value">
+                      <option :value="option.value" :disabled="option.disabled" :selected="option.value === settingOption(item)" x-text="L(option.label, option.labelEn)"></option>
+                    </template>
+                  </select>
+                </template>
+                <template x-if="item.kind !== 'switch' && item.kind !== 'select'">
                   <input :id="'setting-' + item.name" x-model="item.value" @change="saveSetting(item, item.value)" @keydown.enter.prevent="$event.target.blur()" @keydown.escape="item.value = item.saved; $event.target.blur()" :disabled="item.busy" :placeholder="item.deployed ? L('留空用 ', 'Blank uses ') + item.deployed : L('留空用默认值', 'Blank uses the default')" class="field set-input">
                 </template>
               </div>`;
@@ -1325,6 +1340,8 @@ tailwind.config = { corePlugins: { preflight: false } };
           </section>
         </div>
 
+        ${rollingStatusPanel(t)}
+
         <section class="panel">
           <div class="panel-head pb-1">
             <div>
@@ -1384,6 +1401,7 @@ tailwind.config = { corePlugins: { preflight: false } };
               </div>
             </div>
           </div>
+          ${rollingHarvestPanel(t)}
         </section>
       </section>
 
@@ -2469,6 +2487,10 @@ function memoryAdmin() {
     settingOn(item) {
       const own = this.flagValue(item.value);
       return own === null ? this.switchBaseline(item) : own;
+    },
+    settingOption(item) {
+      const options = item.options || [];
+      return [item.value, item.deployed, item.defaultValue].find(value => options.some(option => option.value === value)) || '';
     },
     // 拨回默认就清掉覆盖，跟默认不一样才存 true/false，点了就存。
     toggleSetting(item) {
@@ -4145,6 +4167,7 @@ function memoryAdmin() {
       return Math.floor(sec / 60) + 'm' + String(sec % 60).padStart(2, '0') + 's';
     },
     dreamReasonLabel(reason) {
+      if (reason === 'rolling_window_busy') return this.L('这批消息正在滚动整理，可稍后补跑', 'A rolling window has claimed this batch. Try again later.');
       const zh = {
         already_done: '这一晚已经整理过了',
         no_messages: '没有新消息',

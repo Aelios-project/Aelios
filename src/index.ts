@@ -296,7 +296,7 @@ export default {
     const env = applySettings(deployed, await loadSettings(deployed));
     for (const message of batch.messages) {
       try {
-        await handleQueueMessage(message.body, env);
+        await handleQueueMessage(message.body, env, message.attempts > 1);
         message.ack();
       } catch (error) {
         console.error("queue message failed", error);

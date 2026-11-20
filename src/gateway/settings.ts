@@ -5,10 +5,18 @@ import type { Env } from "../types";
 // 不一样就存 "true"/"false" (所有开关的读法都认这两个)。common 的几项放在设置页最上面「常用」里。
 // labelEn / hintEn / SETTING_GROUPS_EN 是英文版设置页用的；name、group 和中文 label/hint 不动，别处按它们认。
 // upstream 的几项画在「模型与上游」里上游地址下面，不在分组里重复。
+export interface SettingOption {
+  value: string;
+  label: string;
+  labelEn: string;
+  hint?: string;
+  hintEn?: string;
+  disabled?: boolean;
+}
 export interface SettingSpec {
   name: string; label: string; hint?: string; group: string;
   labelEn?: string; hintEn?: string;
-  kind?: "switch"; defaultOn?: boolean; common?: boolean; upstream?: boolean;
+  kind?: "switch" | "select"; defaultOn?: boolean; defaultValue?: string; options?: SettingOption[]; common?: boolean; upstream?: boolean;
 }
 /** The Worker's placement hint: a cloud region the way Cloudflare names it, provider:region. */
 export const PLACEMENT_REGION_RE = /^(aws|gcp|azure):[a-z0-9-]{2,40}$/i;
@@ -62,6 +70,81 @@ export const SETTINGS: SettingSpec[] = [
     hintEn: "Off by default. When on, explicit user decisions rank first for current-state questions and outdated memories get a notice without changing their text.",
     kind: "switch",
     defaultOn: false
+  },
+  {
+    group: "Dream 与日记",
+    name: "ROLLING_DREAM",
+    label: "滚动整理模式",
+    labelEn: "Rolling memory mode",
+    hint: "默认关闭。影子模式只记录本会写入的内容用于和夜间对比；开启后按窗口实时整理，夜间只处理尾巴并写日记。",
+    hintEn: "Off by default. Shadow logs what rolling would write for A/B comparison without writing memories; On extracts in rolling windows while nightly Dream handles only tail messages and the journal.",
+    kind: "select",
+    defaultValue: "off",
+    common: true,
+    options: [
+      {
+        value: "off",
+        label: "关闭 (off)",
+        labelEn: "Off",
+        hint: "保持现有夜间 Dream 流程，不触发滚动窗口任务。",
+        hintEn: "Keep nightly Dream only; do not queue rolling windows."
+      },
+      {
+        value: "shadow",
+        label: "影子对比 (shadow)",
+        labelEn: "Shadow (read-only)",
+        hint: "只记录滚动分诊和本会写入的事件，不改记忆和候选表，夜间照常处理全部消息。",
+        hintEn: "Runs triage and extraction in shadow events only; memories and candidates stay untouched while nightly Dream runs normally."
+      },
+      {
+        value: "on",
+        label: "开启 (on)",
+        labelEn: "On",
+        hint: "写入模式将在下一阶段启用。",
+        hintEn: "Writing is available in the next stage.",
+        disabled: true
+      }
+    ]
+  },
+  {
+    group: "Dream 与日记",
+    name: "ROLLING_WINDOW_MESSAGES",
+    label: "滚动窗口消息条数",
+    labelEn: "Messages per rolling window",
+    hint: "默认 10。未处理消息达到条数或字符上限时触发一个滚动窗口。",
+    hintEn: "Default 10. Triggers a rolling window when unprocessed messages reach this count or the character limit."
+  },
+  {
+    group: "Dream 与日记",
+    name: "ROLLING_WINDOW_CHARS",
+    label: "滚动窗口字符上限",
+    labelEn: "Rolling window character limit",
+    hint: "默认 8000。单条超过上限的消息单独成窗并按码点切片。",
+    hintEn: "Default 8000. A single oversized message forms its own window and is split by code points."
+  },
+  {
+    group: "Dream 与日记",
+    name: "ROLLING_STATE_CHARS",
+    label: "滚动状态字符上限",
+    labelEn: "Rolling state character limit",
+    hint: "默认 1200。超出时先裁导航细节，保留仍有效的决定变更。",
+    hintEn: "Default 1200. Trims navigation details first while keeping active decision changes."
+  },
+  {
+    group: "Dream 与日记",
+    name: "ROLLING_CLAIM_TTL_MINUTES",
+    label: "滚动窗口认领超时（分钟）",
+    labelEn: "Rolling window claim TTL (minutes)",
+    hint: "默认 15。认领超过此时长仍未完成视为中断，允许重领或由夜间接手。",
+    hintEn: "Default 15. Unfinished claims older than this can be re-claimed or picked up by nightly Dream."
+  },
+  {
+    group: "Dream 与日记",
+    name: "ROLLING_MAX_ATTEMPTS",
+    label: "滚动窗口最大重试次数",
+    labelEn: "Max attempts per rolling window",
+    hint: "默认 3。达到上限后记录失败原因并放行后续窗口，原话照常可搜。",
+    hintEn: "Default 3. After exhausting attempts, logs the failure and unblocks later windows while keeping raw search intact."
   },
   { group: "Dream 与日记", name: "DREAM_MAX_MESSAGES", label: "一轮读多少条对话", labelEn: "Messages read per round" },
   { group: "Dream 与日记", name: "DREAM_MEMORY_CONTEXT_LIMIT", label: "一轮参考多少条已有记忆", labelEn: "Existing memories consulted per round" },
@@ -141,6 +224,10 @@ export function validateSettings(value: unknown): Record<string, string> {
     if (name === "CHAT_ARCHIVE_RETENTION_DAYS" && (!/^\d+$/.test(trimmed) || Number(trimmed) > 36_500)) {
       throw new Error(`${name}: enter a whole number from 0 to 36500`);
     }
+    const spec = SETTINGS.find(s => s.name === name);
+    if (spec?.kind === "select" && spec.options?.length && !spec.options.some(option => option.value === trimmed)) {
+      throw new Error(`${name}: must be one of ${spec.options.map(option => option.value).join(", ")}`);
+    }
     out[name] = trimmed;
   }
   return out;
@@ -162,7 +249,8 @@ export function describeSettings(env: Env, settings: Record<string, string>) {
     group.items.push({
       name: spec.name, label: spec.label, hint: spec.hint || "",
       labelEn: spec.labelEn || "", hintEn: spec.hintEn || "",
-      ...(spec.kind ? { kind: spec.kind, defaultOn: spec.defaultOn === true } : {}),
+      ...(spec.kind === "switch" ? { kind: spec.kind, defaultOn: spec.defaultOn === true } : {}),
+      ...(spec.kind === "select" ? { kind: spec.kind, defaultValue: spec.defaultValue || "", options: spec.options || [] } : {}),
       ...(spec.common ? { common: true } : {}),
       ...(spec.upstream ? { upstream: true } : {}),
       value: settings[spec.name] || "",

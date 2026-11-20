@@ -5,6 +5,7 @@ import { getOrCreateConversation } from "../db/conversations";
 import { createMemory, getMemoryById, listMemoriesPage, softDeleteMemory, updateMemory } from "../db/memories";
 import { chatArchiveEnabled } from "../db/chatArchive";
 import { getMessagesByIds, retainedMessageIds, listMessagesByNamespaceInRange, saveIngestMessages } from "../db/messages";
+import { scheduleRollingAfterRequest } from "../memory/rolling/inbox";
 import { runDailyMemoryDigest } from "../memory/dailyDigest";
 import { writeDiaryAfterDream } from "../memory/diaryWriter";
 import { deleteMemoryEmbedding, upsertMemoryEmbedding } from "../memory/embedding";
@@ -433,6 +434,7 @@ async function handleIngestMemories(
     messages,
     archive: chatArchiveEnabled(env) && !source.startsWith("aelios-resident:")
   });
+  scheduleRollingAfterRequest(env, ctx, namespace);
 
   if (handoff) {
     try {

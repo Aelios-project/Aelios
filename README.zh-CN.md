@@ -314,6 +314,8 @@ clef 自动审关着时多列 `memory_candidates` `memory_review`；地址加 `&
 
 ### Dream 的执行与失败状态
 
+滚动整理默认关闭。在设置里选择**影子对比**，可以到 Dream 页并排看滚动草稿和夜间产出。详见[滚动整理说明](docs/memory-gateway.md#rolling-memory)。
+
 管理页「夜间整理」里的非预览手动 Dream 交给已有的持久化 `MEMORY_QUEUE`，确认入队后立即给出任务 ID；此后关页不会取消排队任务。页面每五秒查询状态，刷新后也能重新找到任务。队列每批只取一条消息，避免多个耗时 Dream 共用一次执行的时间预算。
 
 API 客户端在 `POST /v1/dream/run` 中显式传 `{"background":true}`，其余 namespace、date、force 参数照旧。确认入队返回 HTTP **202**，带 `data.run_id` 和 `data.status="queued"`，通过 `GET /v1/dream/status` 查询；缺队列或入队失败返回 **503**。和旧接口一样，每个手动任务只处理一批，不一定处理完整一天，是否还有后续批次要看游标。不传 background 的旧调用仍同步返回，dry-run 也保持同步。

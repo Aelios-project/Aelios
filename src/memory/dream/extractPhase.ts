@@ -279,6 +279,7 @@ export async function runExtractPhase(
     messages: MessageRecord[];
     existingMemories: MemoryApiRecord[];
     hasMore: boolean;
+    extractMessageIds?: ReadonlySet<string>;
   }
 ): Promise<{
   messages: MessageRecord[];
@@ -295,13 +296,16 @@ export async function runExtractPhase(
   let reductions = 0;
   const deadlineAt = Date.now() + EXTRACT_PHASE_BUDGET_MS;
   const speakers = speakersForNamespace(await loadConfig(env), input.namespace);
+  const owned = input.extractMessageIds;
 
   for (;;) {
+    const extractMessages = owned ? messages.filter(message => owned.has(message.id)) : messages;
+    if (!extractMessages.length) return { messages, hasMore, modelResult: { digest: {} }, extractedMemories: [] };
     const prompt = buildDigestPrompt({
       dateLabel: input.dateLabel,
       startIso: input.startIso,
       endIso: input.endIso,
-      messages,
+      messages: extractMessages,
       existingMemories: input.existingMemories,
       hasMore,
       speakers,
@@ -309,7 +313,7 @@ export async function runExtractPhase(
     });
     const modelResult = await callDigestModel(env, prompt, {
       dateLabel: input.dateLabel,
-      messageCount: messages.length,
+      messageCount: extractMessages.length,
       memoryCount: input.existingMemories.length,
       hasMore,
       deadlineAt
@@ -318,7 +322,7 @@ export async function runExtractPhase(
     if (modelResult.digest) {
       extractResult = await extractDreamMemoriesFromMessages(env, {
         namespace: input.namespace,
-        messages,
+        messages: extractMessages,
         speakers,
         dateLabel: input.dateLabel,
         decisionInstructions: isCurrentStateEnabled(env) ? DECISION_FORMAT : undefined,
@@ -339,14 +343,24 @@ export async function runExtractPhase(
       reductions += 1;
       continue;
     }
+    if (modelResult.digest && extractMessages.length !== messages.length) {
+      const ids = new Set(extractMessages.map(message => message.id));
+      const citesOnlyNew = (item: { source_message_ids?: string[] }) =>
+        Boolean(item.source_message_ids?.length && item.source_message_ids.every(id => ids.has(id)));
+      const digest = modelResult.digest;
+      digest.memories_to_add = digest.memories_to_add?.filter(citesOnlyNew);
+      digest.memories_to_update = digest.memories_to_update?.filter(citesOnlyNew);
+      digest.memories_to_delete = digest.memories_to_delete?.filter(citesOnlyNew);
+      digest.decisions = digest.decisions?.filter(citesOnlyNew);
+    }
     if (modelResult.digest?.decisions) {
       modelResult.digest.decisions = isCurrentStateEnabled(env)
-        ? modelResult.digest.decisions.flatMap(candidate => groundCandidate(candidate, messages))
+        ? modelResult.digest.decisions.flatMap(candidate => groundCandidate(candidate, extractMessages))
         : undefined;
     }
     const candidates = [...(modelResult.digest?.decisions ?? []), ...(extractResult?.memories ?? [])];
     if (modelResult.digest && extractResult && !extractResult.reason && isCurrentStateEnabled(env)) {
-      candidates.push(...await extractDecisionFallback(env, { namespace: input.namespace, messages, candidates, deadlineAt }));
+      candidates.push(...await extractDecisionFallback(env, { namespace: input.namespace, messages: extractMessages, candidates, deadlineAt }));
     }
     return {
       messages,
