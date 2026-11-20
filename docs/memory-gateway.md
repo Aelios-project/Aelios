@@ -328,7 +328,9 @@ Dream 沿用原来的抽取批次和审核队列。新抽取要把角色和引�
 
 主动 `recall` 处理亲笔、用户决定和演变问题时，会使用对应的来源与历史。精确措辞见 `evidence.messages` 的角色、时间和文字。`available` 表示返回了完整的保留片段，`partial` 表示有来源缺失或片段被裁剪，`unavailable` 表示此次没有可供核对的原话。普通命中仍可作为线索。这里核对的是当前可读的 `messages`，消息归档保有独立的 `search_chat` 入口。未送达网关或记录钩子的对话没有原话可供抽取。
 
-后台已有的“删掉这句”操作继续清理该句、归档副本和全文索引，并移除来源列表里的 ID。API 可显式传 `DELETE /v1/raw/:id?mode=withdraw` 撤回隐私内容。只有撤回会立墓碑，沿实际引用追踪衍生记录，先在 D1 下架，再清理向量和触发器。日记暂时隐藏并清空旧正文，交给现有日记补写任务使用剩余原文重建。MCP `forget` 默认只归档指定记忆、撤下指向它的待审候选；`permanent: true` 走撤回并硬删指定条目。索引服务出错时可以重试撤回。
+后台每句原话旁有两个动作。“删除这句”（`DELETE /v1/raw/:id`，旧客户端的默认行为）清理该句、归档副本和全文索引，并移除来源列表里的 ID；已经整理出的记忆保留。“撤回这句及其已知衍生记忆”（`?mode=withdraw`）还会立墓碑，沿实际引用追踪衍生记录，先在 D1 下架，再清理向量和触发器，响应里的 `withdrawn_memories` 列出被隐藏的记忆。日记暂时隐藏并清空旧正文，交给现有日记补写任务使用剩余原文重建。两种动作都不会因为某条记忆的整理过程“读过”这句（`context_refs`）而撤下它；助手亲笔写的记忆也不随原话撤回。
+
+没有 `provenance` 的旧行（0023 之前由 Dream、审核或抽取写入）把整批消息都记进了 `source_message_ids`，列出某个 ID 只说明模型读过它。撤回时，只列一个 ID 的旧行按引用处理；列了多个 ID 的旧行只有在正文抄录了被撤回原话（忽略空白、标点和大小写后连续 12 字，较短的原话须整句出现）时才隐藏，其余保留、去掉这个 ID，并在 `unverified_memories` 中列出，供人工查看。MCP `forget` 默认只归档指定记忆、撤下指向它的待审候选；`permanent: true` 走撤回并硬删指定条目。索引服务出错时可以重试撤回。
 
 遗忘覆盖范围取决于保存下来的关联。已经折叠且失去来源映射的历史摘要、手工 handoff、单独保存的珍贵片段和 Notebook，不能凭内容相似自动追删。已有导出、备份、请求日志、诊断记录、外部客户端缓存及已经发送给模型的内容也各有独立的生命周期。运行中的外部请求或旧汇总任务可能持有先前读出的内容。逻辑下架不提供密码学擦除保证。现有整理任务可用剩余材料重新生成摘要，缺少依据时允许留空。
 
@@ -337,3 +339,5 @@ Dream 沿用原来的抽取批次和审核队列。新抽取要把角色和引�
 Preview upgrades also apply 0025. A preview digest sometimes copied the entire batch into its diary citation list. Where that list cannot be distinguished from a diary citing every line, the old text and IDs stay in storage for audit. The diary is hidden until backfill can rebuild it from surviving messages.
 
 Migration 0026 also removes similarity-only predecessor edges from identifiable preview approvals and revisions. The version chain still records which entry they replaced.
+
+Migration 0027 narrows the pre-provenance edge in `memory_derivations` to rows that list a single message, so withdrawing an unrelated line from an old Dream batch no longer hides the other memories made from that batch.

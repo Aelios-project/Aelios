@@ -654,8 +654,8 @@ tailwind.config = { corePlugins: { preflight: false } };
                     <p class="mt-1 whitespace-pre-wrap text-sm leading-7" :class="more ? '' : 'line-clamp-6'" x-text="message.content"></p>
                     <button type="button" x-show="(message.content || '').length > 320" @click="more = !more" class="link-btn mt-1" x-text="more ? L('收起', 'Show less') : L('展开', 'Show more')"></button>
                   </div>
-                  <button type="button" @click="deleteRaw(message)" class="icon-btn mt-0.5" :aria-label="L('删掉这句', 'Delete this line')" :title="L('删掉这句', 'Delete this line')">${I.trash}</button>
-                  <button type="button" @click="deleteRaw(message, 'withdraw')" class="text-xs muted" x-text="L('撤回引用', 'Withdraw citations')"></button>
+                  <button type="button" @click="deleteRaw(message)" class="icon-btn mt-0.5" :aria-label="L('删除这句', 'Delete this line')" :title="L('删除这句', 'Delete this line')">${I.trash}</button>
+                  <button type="button" @click="deleteRaw(message, 'withdraw')" class="text-xs muted" :title="L('撤回这句及其已知衍生记忆', 'Withdraw this line and its known derived memories')" x-text="L('撤回及已知衍生', 'Withdraw with derived')"></button>
                   <button type="button" @click="togglePin(message)" class="heart" :class="isPinned(message) ? 'is-on' : ''" :aria-pressed="isPinned(message) ? 'true' : 'false'" :aria-label="isPinned(message) ? L('取消珍贵', 'Remove from keepsakes') : L('收藏为珍贵', 'Save as a keepsake')" :title="isPinned(message) ? L('取消珍贵', 'Remove from keepsakes') : L('收藏为珍贵', 'Save as a keepsake')">
                     <span x-show="isPinned(message)">${HEART_FILLED}</span><span x-show="!isPinned(message)">${I.heart}</span>
                   </button>
@@ -3247,14 +3247,21 @@ function memoryAdmin() {
     async deleteRaw(message, mode) {
       const withdraw = mode === 'withdraw';
       const confirmation = withdraw
-        ? this.L('撤回这句及直接或间接引用它的记忆？相关日记将重新生成。', 'Withdraw this line and memories derived from it? Affected diaries will be rebuilt.')
-        : this.L('删掉这句？删了不能恢复。', 'Delete this line? This cannot be undone.');
+        ? this.L('撤回这句及其已知衍生记忆？原话会删除；引用或抄录它的整理记忆、候选和长尾会隐藏，相关日记用剩下的原话重写。助手亲笔写的记忆、只是同一批读过它的旧记忆会保留。之前的导出和备份不在范围内。',
+            'Withdraw this line and its known derived memories? The line is deleted; memories, candidates and long-tail entries that cite or copy it are hidden, and affected diaries are rewritten from the remaining lines. Memories the assistant wrote itself, and older memories that only shared a batch with it, stay. Earlier exports and backups are out of reach.')
+        : this.L('删除这句？原话和它的搜索索引会删除，不能恢复。已经整理出的记忆不受影响；要一并撤回，请用「撤回这句及其已知衍生记忆」。',
+            'Delete this line? The line and its search entry are removed for good. Memories already made from it stay; to remove those too, use "Withdraw this line and its known derived memories".');
       if (!window.confirm(confirmation)) return;
       try {
-        await this.request(this.withNamespace('/v1/raw/' + encodeURIComponent(message.id) + (withdraw ? '?mode=withdraw' : '')), { method: 'DELETE' });
+        const result = await this.request(this.withNamespace('/v1/raw/' + encodeURIComponent(message.id) + (withdraw ? '?mode=withdraw' : '')), { method: 'DELETE' });
         this.todayMessages = this.todayMessages.filter(function(item) { return item.id !== message.id; });
         if (this.stats.today_raw_count) this.stats.today_raw_count -= 1;
-        this.notify(this.L('删掉了', 'Deleted'));
+        const hidden = ((result && result.data && result.data.withdrawn_memories) || []).length;
+        const kept = ((result && result.data && result.data.unverified_memories) || []).length;
+        this.notify(withdraw
+          ? this.L('已撤回，隐藏 ' + hidden + ' 条衍生记忆' + (kept ? '；' + kept + ' 条旧记忆来源不明，已保留' : ''),
+              'Withdrawn; ' + hidden + ' derived memories hidden' + (kept ? '; ' + kept + ' older memories with unclear sources kept' : ''))
+          : this.L('删除了', 'Deleted'));
       } catch (error) {
         this.notify(error.message);
       }

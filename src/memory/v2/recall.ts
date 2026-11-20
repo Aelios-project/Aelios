@@ -30,7 +30,8 @@ import type { MemoryApiRecordWithProvenance } from "../search";
 import { filterAndCompressMemories } from "../filter";
 import { createEmbedding } from "../embedding";
 import { getMessagesByIds } from "../../db/messages";
-import { asksForExactWording, searchQuotes } from "../quotes";
+import { searchQuotes } from "../quotes";
+import { readRecallIntent } from "../recallIntent";
 import type { MemoryProvenance } from "../provenance";
 import { shapeRecallQuery } from "../queryShape";
 import { expandRecallByRelations, isRelationExpansionEnabled } from "../relations";
@@ -417,12 +418,10 @@ export async function runRecall(env: Env, input: RecallInput): Promise<RecallRes
   }
   const minScore = readRecallMinScore(env, input.min_score);
 
-  const explicit = input.grounded !== false && env.RECALL_PROVENANCE_SELECTION !== "false";
-  const evolution = explicit && /如何演变|怎么演变|决定.{0,5}经过|how did .{0,45}(?:evolve|change)/i.test(query);
+  // Explicit searches only; automatic grounded=false recall keeps its ranking.
+  const { evolution, writes, userDecision, exact } = input.grounded !== false
+    ? readRecallIntent(env, query) : { evolution: false, writes: false, userDecision: false, exact: false };
   const history = input.include_history ?? evolution;
-  const writes = explicit && /亲笔|亲自写|写了什么|what did .{1,35} write/i.test(query);
-  const userDecision = explicit && /(?:用户|我)(?:.{0,8})(?:决定|最终选)|(?:user|I) (?:finally )?(?:decide|choose)/i.test(query);
-  const exact = explicit && asksForExactWording(query);
   const shaped = shapeRecallQuery({ query, recent: input.recent });
   const glossaryQuery = shaped.thin
     ? [query, ...(input.recent ?? [])].filter(Boolean).join("\n")

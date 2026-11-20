@@ -260,3 +260,56 @@ test("preview batch-wide diary citations are rebuilt from surviving raw messages
   const rewritten=await getDailyLog(env.DB,{namespace:"default",date:day});
   assert.deepEqual(rewritten?.source_message_ids,["gw_user_1"]);
 });
+
+// R01/R02: deleting an unrelated line (m_junk) never takes memories that only read it.
+const memoryRow = (id: string, content: string, source: string, authoredBy: string | null, sources: string[], provenance: unknown) =>
+  sqlite.prepare(`INSERT INTO memories(id,namespace,type,content,source,authored_by,source_message_ids,provenance,created_at,updated_at)
+    VALUES (?,'default','note',?,?,?,?,?,'2026','2026')`)
+    .run(id, content, source, authoredBy, JSON.stringify(sources), provenance === null ? null : JSON.stringify(provenance));
+const memoryStatus = (id: string) => (sqlite.prepare("SELECT status FROM memories WHERE id=?").get(id) as any)?.status;
+const sourcesOf = (id: string) => JSON.parse((sqlite.prepare("SELECT source_message_ids s FROM memories WHERE id=?").get(id) as any).s);
+
+test("R01: an unrelated line goes alone; the nickname and a later authored memory stay, in either mode", async () => {
+  const { dreamOrigin, explicitWrite } = await import("../src/memory/provenance");
+  const love = "gw_user_1";
+  const junk = "gw_req_1:assistant";
+  const authored = explicitWrite({ source: "resident", namespace: "default" } as any, "mcp", "旦九");
+  memoryRow("nick_authored", "我开始叫她小九", "mcp", "旦九", [love], authored);
+  memoryRow("nick_dream", "她被叫作小九", "judge", null, [love], dreamOrigin([love], { messages: [love, junk] }));
+  memoryRow("later", "那晚她又叫了我一次", "mcp", "旦九", [], { ...authored, context_refs: ["memory:nick_authored"] });
+  for (const mode of ["clean", "withdraw"]) {
+    sqlite.prepare("INSERT OR IGNORE INTO messages(id,conversation_id,namespace,role,content,created_at) VALUES (?,'c','default','assistant','我不能完成这个任务。','2026')").run(junk);
+    const response = await del(junk, "default", "owner-key", mode);
+    assert.equal(response.status, 200, mode);
+    assert.deepEqual(["nick_authored", "nick_dream", "later"].map(memoryStatus), ["active", "active", "active"], mode);
+    if (mode === "withdraw") assert.deepEqual(response.body.data.withdrawn_memories, []);
+  }
+  assert.deepEqual(rows(), ["gw_req_2:assistant", "gw_user_1"]);
+});
+
+test("R02: rows written before provenance are withdrawn only when they cite the line alone or copy it", async () => {
+  const love = "gw_user_1";
+  const junk = "gw_req_1:assistant";
+  // Shapes the pre-provenance Dream wrote: whole-batch source lists, no provenance.
+  memoryRow("batch_update", "她请旦九帮忙看一段文字", "judge", null, [love, junk], null);
+  memoryRow("batch_copy", "助手回答过：我不能完成这个任务。", "dream", null, [love, junk], null);
+  memoryRow("single_cite", "助手那天拒绝过一次", "judge", null, [junk], null);
+  memoryRow("hand_written", "我开始叫她小九", "mcp", null, [love, junk], null);
+  const response = await del(junk, "default", "owner-key", "withdraw");
+  assert.equal(response.status, 200);
+  assert.deepEqual(new Set(response.body.data.withdrawn_memories), new Set(["batch_copy", "single_cite"]));
+  assert.deepEqual(response.body.data.unverified_memories, ["batch_update"]);
+  assert.deepEqual(["batch_update", "batch_copy", "single_cite", "hand_written"].map(memoryStatus),
+    ["active", "archived", "archived", "active"]);
+  assert.deepEqual(sourcesOf("batch_update"), [love], "kept rows no longer point at the withdrawn line");
+  assert.deepEqual(sourcesOf("hand_written"), [love]);
+  // Withdrawing the line the row actually came from still cannot prove dependence for a batch row.
+  const again = await del(love, "default", "owner-key", "withdraw");
+  assert.equal(again.status, 200);
+  assert.equal(memoryStatus("batch_update"), "archived", "now a single-cited row: the citation is unambiguous");
+});
+
+test("the delete actions are named for their scope", () => {
+  assert.match(ADMIN_HTML, /L\('删除这句', 'Delete this line'\)/);
+  assert.match(ADMIN_HTML, /撤回这句及其已知衍生记忆/);
+});

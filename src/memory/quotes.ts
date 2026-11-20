@@ -1,3 +1,4 @@
+import { asksForExactWording } from "./recallIntent";
 import { getMessagesByIds } from "../db/messages";
 import type { MessageRecord } from "../types";
 import { searchFtsIds } from "./fts";
@@ -105,10 +106,6 @@ export function quoteVisibleIn(hit: Pick<QuoteHit, "content" | "excerpt">, conte
   return core.length >= 8 && ctx.includes(core);
 }
 
-
-export function asksForExactWording(query: string): boolean {
-  return /原话|逐字|怎么说的|exact (?:wording|words)|what did .{1,35} say|verbatim|quot(?:e|ation)\b/i.test(query);
-}
 
 export async function searchQuotes(
   db: D1Database,
