@@ -585,7 +585,7 @@ export async function markMemoriesUnderReview(
 // 同时从 Vectorize 下架 (向量库只索引 active)。
 export async function archiveMemory(
   env: Env,
-  input: { namespace: string; id: string }
+  input: { namespace: string; id: string; dismissCandidates?: boolean }
 ): Promise<boolean> {
   const db = env.DB;
   const now = nowIso();
@@ -595,11 +595,16 @@ export async function archiveMemory(
     .first<{ id: string; vector_id: string | null }>();
   if (!existing) return false;
 
-  await db
-    .prepare("UPDATE memories SET status = 'archived', updated_at = ? WHERE namespace = ? AND id = ?")
-    .bind(now, input.namespace, input.id)
-    .run();
-  await deleteFtsRow(db, "memory_fts", "memory_id", input.id);
+  const changes = [
+    db.prepare("UPDATE memories SET status = 'archived', updated_at = ? WHERE namespace = ? AND id = ?")
+      .bind(now, input.namespace, input.id),
+    db.prepare("DELETE FROM memory_fts WHERE namespace=? AND memory_id=?").bind(input.namespace, input.id)
+  ];
+  if (input.dismissCandidates) {
+    changes.push(db.prepare(`UPDATE memory_candidates SET status='discarded', decision_note='target_archived', updated_at=?
+      WHERE namespace=? AND target_memory_id=? AND status='pending'`).bind(now, input.namespace, input.id));
+  }
+  await db.batch(changes);
 
   if (existing.vector_id) {
     try {

@@ -613,8 +613,11 @@ export async function runDiaryWriter(
     title: outcome.result.title,
     summary: outcome.result.summary,
     sourceMessageIds,
-    inputRefs: [...new Set([...knownIds.map(id => `message:${id}`), ...(existing?.input_refs ?? []),
-      ...(existing ? [`day:${dateLabel}@${existing.updated_at}`, ...existing.source_message_ids.map(id => `message:${id}`)] : [])])]
+    rebuild: !existing,
+    contextRefs: [
+      ...knownIds.filter(id => !sourceMessageIds.includes(id)).map(id => `message:${id}`),
+      ...(existing ? [`day:${dateLabel}@${existing.updated_at}`] : [])
+    ]
   });
 
   return {

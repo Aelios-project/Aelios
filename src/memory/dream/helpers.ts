@@ -46,6 +46,7 @@ export interface DigestMemoryDelete {
 }
 
 export interface DailyDigestResult {
+  source_message_ids?: string[];
   date?: string;
   title?: string;
   summary?: string;
@@ -206,6 +207,7 @@ export function normalizeDigestResult(value: unknown): DailyDigestResult {
     : undefined;
 
   return {
+    source_message_ids: readStringArray(raw.source_message_ids),
     date: readString(raw.date) ?? undefined,
     title: readString(raw.title) ?? undefined,
     summary: readString(raw.summary) ?? undefined,

@@ -48,8 +48,8 @@ beforeEach(() => {
   }
 });
 
-async function del(id: string, namespace = "default", key = "owner-key") {
-  const response = await worker.fetch(new Request(`https://aelios.test/v1/raw/${encodeURIComponent(id)}?namespace=${namespace}`, {
+async function del(id: string, namespace = "default", key = "owner-key", mode = "clean") {
+  const response = await worker.fetch(new Request(`https://aelios.test/v1/raw/${encodeURIComponent(id)}?namespace=${namespace}&mode=${mode}`, {
     method: "DELETE", headers: { authorization: `Bearer ${key}` }
   }), env, { waitUntil() {} } as any);
   return { status: response.status, body: await response.json() as any };
@@ -108,7 +108,7 @@ test("revocation hides transitive Dream inputs before a vector failure; retry an
     sqlite.prepare(`INSERT INTO memories (id,namespace,type,content,vector_id,created_at,updated_at,source_message_ids,provenance)
     VALUES (?,?, 'note','test adapter',?, '2026-01-01','2026-01-01',?,?)`);
   insert.run("parent", "default", "vec_parent", JSON.stringify([id]), origin);
-  insert.run("child", "default", "vec_child", "[]", JSON.stringify(dreamOrigin([], ["parent"])));
+  insert.run("child", "default", "vec_child", "[]", JSON.stringify(dreamOrigin([], {target:"parent"})));
   insert.run(
     "independent",
     "default",
@@ -161,7 +161,7 @@ test("revocation hides transitive Dream inputs before a vector failure; retry an
       return [];
     }
   };
-  assert.equal((await del(id)).status, 503);
+  assert.equal((await del(id, "default", "owner-key", "withdraw")).status, 503);
   const active = () =>
     sqlite
       .prepare("SELECT id FROM memories WHERE status='active' ORDER BY id")
@@ -169,7 +169,7 @@ test("revocation hides transitive Dream inputs before a vector failure; retry an
       .map((r) => r.id);
   assert.deepEqual(active(), ["independent", "other"]);
   assert.equal(sqlite.prepare("SELECT count(*) n FROM longtail").get()?.n, 0);
-  assert.equal(sqlite.prepare("SELECT count(*) n FROM daily_log").get()?.n, 0);
+  assert.equal(sqlite.prepare("SELECT count(*) n FROM daily_log WHERE needs_rebuild=0").get()?.n, 0);
   assert.equal(sqlite.prepare("SELECT count(*) n FROM memory_candidates").get()?.n, 0);
   assert.throws(() => insert.run("late", "default", "vec_late", "[]", origin), /revoked/);
   const result = await runRecall(env, {
@@ -180,12 +180,12 @@ test("revocation hides transitive Dream inputs before a vector failure; retry an
   });
   assert.ok(result.hits.every((hit) => hit.id !== "parent" && hit.id !== "child"));
   fail = false;
-  assert.equal((await del(id)).status, 200);
+  assert.equal((await del(id, "default", "owner-key", "withdraw")).status, 200);
   assert.deepEqual(
     new Set(removed),
     new Set(["vec_parent", "vec_child", "trg#c", "trg#b", "trg#j", "lt_tail", "lt_lt_tail"])
   );
-  assert.equal((await del(id)).status, 404);
+  assert.equal((await del(id, "default", "owner-key", "withdraw")).status, 404);
   sqlite.exec(
     "INSERT INTO weekly_log(namespace,week,start_date,end_date,title,summary,source_days,updated_at) VALUES ('default','2026-W01','2025-12-29','2026-01-04','clean','from surviving inputs',1,'2026')"
   );
@@ -210,6 +210,25 @@ test("wake_up cannot replay an impression cached before a source was forgotten",
     INSERT INTO weekly_log(namespace,week,start_date,end_date,title,summary,source_days,updated_at)
     VALUES ('cache-test','2026-W01','2025-12-29','2026-01-04','test','weekly impression',1,'2026')`);
   assert.equal((await buildBootPackage(env, { namespace })).impressions.weekly?.summary, "weekly impression");
-  assert.equal((await del("erase", namespace)).status, 200);
+  assert.equal((await del("erase", namespace, "owner-key", "withdraw")).status, 200);
   assert.equal((await buildBootPackage(env, { namespace })).impressions.weekly, null);
+});
+
+test("cleanup detaches a line; withdrawal follows citations, never batch context", async () => {
+  const {dreamOrigin} = await import("../src/memory/provenance");
+  const insert = sqlite.prepare(`INSERT INTO memories(id,namespace,type,content,source_message_ids,provenance,created_at,updated_at)
+    VALUES (?,'default','note',?,?,?,'2026','2026')`);
+  const love = "gw_user_1";
+  const junk = "gw_req_1:assistant";
+  insert.run("nick","开始叫旦九小九", JSON.stringify([love]), JSON.stringify(dreamOrigin([love], {messages:[love,junk]})));
+  insert.run("later","独立的一晚", "[]", JSON.stringify(dreamOrigin([], {memories:["nick"]})));
+  insert.run("noise","待移除的一句",JSON.stringify([junk]),JSON.stringify(dreamOrigin([junk])));
+  assert.equal((await del(junk)).status,200);
+  assert.equal(sqlite.prepare("SELECT source_message_ids FROM memories WHERE id='noise'").get()?.source_message_ids,"[]");
+  assert.equal(sqlite.prepare("SELECT count(*) n FROM memory_revocations").get()?.n,0);
+  assert.equal((await del(junk,"default","owner-key","withdraw")).status,200);
+  assert.equal(sqlite.prepare("SELECT status FROM memories WHERE id='nick'").get()?.status,"active");
+  assert.equal((await del(love,"default","owner-key","withdraw")).status,200);
+  assert.equal(sqlite.prepare("SELECT status FROM memories WHERE id='nick'").get()?.status,"archived");
+  assert.equal(sqlite.prepare("SELECT status FROM memories WHERE id='later'").get()?.status,"active");
 });

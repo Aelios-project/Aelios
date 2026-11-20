@@ -44,6 +44,7 @@ export function buildDigestPrompt(input: {
     "你会读取旧长期记忆和当天聊天 transcript，产出一份更干净、更一致、更有用的 memory store 整理计划。",
     "只输出 JSON，不要 markdown，不要解释，不要输出思考过程。",
     "",
+    "日记草稿用 source_message_ids 列出实际引用的原话 ID；没有引用时留空。",
     "Dream 目标：",
     "- 合并重复记忆，避免同一事实以多个版本长期存在。",
     "- 发现过时、被新信息否定、互相矛盾的旧记忆，并提出更新或删除建议（全部进入审核队列）。",

@@ -43,7 +43,7 @@ export async function applyDreamV2(
   errors: Array<{ target_id: string; reason: string }>;
 }> {
   const { namespace, strategy, dateLabel, digest, messageIds, extracted } = input;
-  const origin = dreamOrigin(messageIds, input.contextMemoryIds);
+  const origin = (refs?: string[], target?: string) => dreamOrigin(evidence(refs), { messages: messageIds, memories: input.contextMemoryIds, target });
   const evidence = (refs?: string[]) => [...new Set(refs)].filter(id => messageIds.includes(id));
   const isReview = strategy === "review";
   let updated = 0;
@@ -80,7 +80,7 @@ export async function applyDreamV2(
         importance: item.importance ?? 0.72,
         tags: item.tags,
         sourceMessageIds: evidence(item.source_message_ids),
-        provenance: origin,
+        provenance: origin(item.source_message_ids),
         source: "dream_add"
       });
       queuedCandidates += 1;
@@ -113,7 +113,7 @@ export async function applyDreamV2(
           tags: item.tags,
           source: "dream",
           sourceMessageIds: evidence(item.source_message_ids),
-          provenance: origin,
+          provenance: origin(item.source_message_ids, item.target_id),
           reason: "dream_world_fact"
         });
         updated++;
@@ -139,7 +139,7 @@ export async function applyDreamV2(
         importance: item.importance ?? 0.72,
         tags: item.tags,
         sourceMessageIds: evidence(item.source_message_ids),
-        provenance: origin,
+        provenance: origin(item.source_message_ids, item.target_id),
         source: "dream_update",
         targetMemoryId: item.target_id
       });
@@ -165,7 +165,7 @@ export async function applyDreamV2(
         importance: existing.importance,
         tags: [],
         sourceMessageIds: evidence(item.source_message_ids),
-        provenance: origin,
+        provenance: origin(item.source_message_ids, item.target_id),
         source: "dream_delete",
         targetMemoryId: item.target_id,
         decisionNote: item.reason ?? "dream_delete"
@@ -183,8 +183,8 @@ export async function applyDreamV2(
     date: dateLabel,
     title: digest.title ?? dateLabel,
     summary: digest.summary ?? "",
-    sourceMessageIds: messageIds,
-    inputRefs: origin.inputs
+    sourceMessageIds: evidence(digest.source_message_ids),
+    contextRefs: origin(digest.source_message_ids).context_refs
   });
 
   return { added: 0, updated, deleted, queuedCandidates, longtail: 0, errors };

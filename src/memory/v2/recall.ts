@@ -338,7 +338,7 @@ export interface RecallInput {
 
 export interface RecallHit {
   revision_of?: string;
-  provenance?: Omit<MemoryProvenance, "inputs" | "candidate_id">;
+  provenance?: Omit<MemoryProvenance, "inputs" | "context_refs" | "candidate_id">;
   version_status?: string | null;
   id: string;
   content: string;

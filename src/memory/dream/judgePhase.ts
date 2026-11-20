@@ -59,7 +59,11 @@ export async function recordDreamReviewProposal(
       "dream_review_proposal",
       JSON.stringify({
         date: input.dateLabel,
-        message_ids: input.messageIds,
+        message_ids: [...new Set([
+          ...(input.digest.source_message_ids ?? []),
+          ...[...(input.digest.memories_to_add ?? []), ...(input.digest.memories_to_update ?? []),
+            ...(input.digest.memories_to_delete ?? [])].flatMap(item => item.source_message_ids ?? [])
+        ])].filter(id => input.messageIds.includes(id)),
         title: input.digest.title ?? null,
         summary: input.digest.summary ?? null,
         memories_to_add: input.digest.memories_to_add ?? [],
@@ -98,7 +102,7 @@ export async function queueDreamExtractedMemories(
         importance: memory.importance,
         tags: memory.tags,
         sourceMessageIds: memory.source_message_ids,
-        provenance: { ...dreamOrigin(input.messageIds, [], memory.context_dates), attributed_actor: memory.attributed_role ?? "unknown",
+        provenance: { ...dreamOrigin(memory.source_message_ids, { messages: input.messageIds, dates: memory.context_dates }), attributed_actor: memory.attributed_role ?? "unknown",
           evidence_relation: memory.attributed_role ? "paraphrase" : "interpretation" },
         source: "dream_extract",
         targetMemoryId,

@@ -11,6 +11,7 @@ export interface DailyLogRow {
   title: string;
   summary: string;
   input_refs?: string[];
+  context_refs?: string[];
   source_message_ids: string[];
   updated_at: string;
 }
@@ -25,6 +26,7 @@ type DailyLogDbRow = {
   title: string;
   summary: string;
   input_refs?: string | null;
+  context_refs?: string | null;
   source_message_ids?: string | null;
   updated_at: string;
 };
@@ -36,6 +38,7 @@ function mapDailyLog(row: DailyLogDbRow): DailyLogRow {
     title: row.title,
     summary: row.summary,
     ...(row.input_refs ? {input_refs: parseStringArray(row.input_refs)} : {}),
+    ...(row.context_refs ? {context_refs: parseStringArray(row.context_refs)} : {}),
     source_message_ids: readSourceMessageIds(row.source_message_ids),
     updated_at: row.updated_at
   };
@@ -46,7 +49,7 @@ export async function getDailyLog(
   input: { namespace: string; date: string; includeInputs?: boolean }
 ): Promise<DailyLogRow | null> {
   const row = await db
-    .prepare(`SELECT namespace, date, title, summary, source_message_ids, updated_at${input.includeInputs ? ",input_refs" : ""} FROM daily_log WHERE namespace = ? AND date = ?`)
+    .prepare(`SELECT namespace, date, title, summary, source_message_ids, updated_at${input.includeInputs ? ",input_refs,context_refs" : ""} FROM daily_log WHERE namespace = ? AND date = ? AND needs_rebuild = 0`)
     .bind(input.namespace, input.date)
     .first<DailyLogDbRow>();
   return row ? mapDailyLog(row) : null;
@@ -54,22 +57,22 @@ export async function getDailyLog(
 
 export async function upsertDailyLog(
   db: D1Database,
-  input: { namespace: string; date: string; title: string; summary: string; inputRefs?: string[]; sourceMessageIds?: string[] }
+  input: { namespace: string; date: string; title: string; summary: string; rebuild?: boolean; contextRefs?: string[]; sourceMessageIds?: string[] }
 ): Promise<DailyLogRow> {
   const now = nowIso();
   const sourceMessageIds = [...new Set((input.sourceMessageIds ?? []).filter(Boolean))];
   const encoded = JSON.stringify(sourceMessageIds);
   await db
     .prepare(
-      `INSERT INTO daily_log (namespace, date, title, summary, source_message_ids, updated_at, input_refs) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO daily_log (namespace, date, title, summary, source_message_ids, updated_at, input_refs, context_refs) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(namespace, date) DO UPDATE SET
          title = excluded.title,
          summary = excluded.summary,
          source_message_ids = excluded.source_message_ids,
-         input_refs = excluded.input_refs,
-         updated_at = excluded.updated_at`
+         needs_rebuild = 0, context_refs = excluded.context_refs, input_refs = excluded.input_refs,
+         updated_at = excluded.updated_at WHERE daily_log.needs_rebuild=0 OR ?=1`
     )
-    .bind(input.namespace, input.date, input.title, input.summary, encoded, now, JSON.stringify(input.inputRefs ?? []))
+    .bind(input.namespace, input.date, input.title, input.summary, encoded, now, JSON.stringify(sourceMessageIds.map(id => `message:${id}`)), JSON.stringify(input.contextRefs ?? []), input.rebuild ? 1 : 0)
     .run();
   return {
     namespace: input.namespace,
@@ -89,7 +92,7 @@ export async function listDailyLogsInRange(
     .prepare(
       `SELECT namespace, date, title, summary, source_message_ids, updated_at
        FROM daily_log
-       WHERE namespace = ?
+       WHERE namespace = ? AND needs_rebuild = 0
          AND date >= ?
          AND date <= ?
        ORDER BY date ASC`
@@ -127,7 +130,7 @@ export async function listRecentDailyLogs(
     .prepare(
       `SELECT namespace, date, title, summary, source_message_ids, updated_at
        FROM daily_log
-       WHERE namespace = ?
+       WHERE namespace = ? AND needs_rebuild = 0
        ORDER BY date DESC
        LIMIT ?`
     )
@@ -144,7 +147,7 @@ export async function listDailyLogDatesBefore(
     .prepare(
       `SELECT date
        FROM daily_log
-       WHERE namespace = ?
+       WHERE namespace = ? AND needs_rebuild = 0
          AND date < ?
        ORDER BY date ASC`
     )

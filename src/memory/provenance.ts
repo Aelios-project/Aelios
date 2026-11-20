@@ -10,8 +10,9 @@ export interface MemoryProvenance {
   attributed_actor: "user" | "assistant" | "tool" | "unknown";
   evidence_relation: "verbatim" | "paraphrase" | "interpretation" | "unknown";
   completeness: "partial" | "unknown";
-  // Writer inputs, separate from the existing supporting source_message_ids.
+  // Only cited inputs can revoke a record. Read-only context is audit data.
   inputs?: string[];
+  context_refs?: string[];
   candidate_id?: string;
 }
 
@@ -32,21 +33,25 @@ export function explicitWrite(
 }
 
 export function dreamOrigin(
-  messageIds: string[],
-  memoryIds: string[] = [],
-  dates: string[] = [],
+  cited: string[],
+  context: { messages?: string[]; memories?: string[]; dates?: string[]; candidates?: string[]; target?: string } = {}
 ): MemoryProvenance {
+  const inputs = new Set(cited.map(id => `message:${id}`));
+  if (context.target) inputs.add(`memory:${context.target}`);
+  const seen = [
+    ...(context.messages ?? []).map(id => `message:${id}`),
+    ...(context.memories ?? []).map(id => `memory:${id}`),
+    ...(context.dates ?? []).map(id => `day:${id}`),
+    ...(context.candidates ?? []).map(id => `candidate:${id}`)
+  ];
   return {
     creation_mode: "dream_derived",
     recording_actor: "dream",
     attributed_actor: "unknown",
     evidence_relation: "interpretation",
     completeness: "partial",
-    inputs: [...new Set([
-      ...messageIds.map(id => `message:${id}`),
-      ...memoryIds.map(id => `memory:${id}`),
-      ...dates.map(date => `day:${date}`)
-    ])],
+    inputs: [...inputs],
+    context_refs: [...new Set(seen.filter(ref => !inputs.has(ref)))]
   };
 }
 

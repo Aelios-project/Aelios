@@ -413,5 +413,6 @@ test("a replayed Dream extraction does not re-enqueue an approved utterance, or 
     ["dream_derived", "assistant", "judge", "partial", null]
   );
   assert.deepEqual(JSON.parse(String(record.source_message_ids)), ["m1"]);
-  assert.deepEqual(origin.inputs, ["message:m1", "message:m2"]);
+  assert.deepEqual(origin.inputs, ["message:m1"]);
+  assert.deepEqual(origin.context_refs, ["message:m2"]);
 });

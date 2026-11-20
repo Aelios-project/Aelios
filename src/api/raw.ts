@@ -1,6 +1,6 @@
 import { authenticate } from "../auth/apiKey";
 import { requireScope } from "../auth/scopes";
-import { invalidateKnownInputs } from "../db/v2/revocation";
+import { cleanRawMessage, invalidateKnownInputs } from "../db/v2/revocation";
 import type { Env } from "../types";
 import { json, openAiError } from "../utils/json";
 import { resolveNamespace } from "../utils/request";
@@ -17,8 +17,13 @@ export async function handleRawMessage(request: Request, env: Env): Promise<Resp
   const scopeError = requireScope(auth.profile, "memory:write");
   if (scopeError) return scopeError;
   const namespace = resolveNamespace(auth.profile, url.searchParams.get("namespace"));
+  const mode = url.searchParams.get("mode") ?? "clean";
+  if (mode !== "withdraw" && mode !== "clean") return openAiError("Unknown deletion mode", 400);
   try {
-    if (!await invalidateKnownInputs(env, { namespace, id }, "message")) return openAiError("Message not found", 404);
+    const removed = mode === "withdraw"
+      ? await invalidateKnownInputs(env, { namespace, id }, "message")
+      : await cleanRawMessage(env.DB, namespace, id);
+    if (!removed) return openAiError("Message not found", 404);
   } catch { return openAiError("Source cleanup incomplete; retry deletion", 503); }
   return json({ data: { id, deleted: true } });
 }

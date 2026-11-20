@@ -39,6 +39,7 @@ import { handleModelCatalog, handleModelTest, handleModels } from "./api/models"
 import { handleRelationsGraph } from "./api/relations";
 import { runCandidateJudge } from "./memory/candidateJudge";
 import { runDailyMemoryDigest, runDreamBackfill } from "./memory/dailyDigest";
+import { readCursor, writeCursor } from "./db/retention";
 import { writeDiaryAfterDream } from "./memory/diaryWriter";
 import { backfillFts } from "./memory/fts";
 import { runVectorBackfill } from "./memory/vectorBackfill";
@@ -98,6 +99,14 @@ async function runDailyMemoryDigestBatches(env: Env, namespace: string): Promise
     }
   }
 
+  const rebuildCursor = `diary_rebuild:${namespace}`;
+  const afterDate = await readCursor(env.DB, rebuildCursor);
+  const rebuild = await env.DB.prepare(`SELECT date FROM daily_log d WHERE namespace=? AND needs_rebuild=1
+    ORDER BY (date <= ?) ASC, date LIMIT 3`).bind(namespace, afterDate ?? '').all<{date:string}>();
+  for (const {date} of rebuild.results) {
+    results.push({type:"backfill_diary", date_label:date, result:await writeDiaryAfterDream(env, namespace, date)});
+    await writeCursor(env.DB, rebuildCursor, date);
+  }
   return results;
 }
 

@@ -39,7 +39,6 @@ import {
 import { isClefReviewOn } from "../memory/clefJudge";
 import { exportMemories } from "../memory/export";
 import { formatSpeakerTranscript, loadSpeakersForNamespace } from "../memory/speakers";
-import { invalidateKnownInputs } from "../db/v2/revocation";
 import { explicitWrite, parseOrigin } from "../memory/provenance";
 import { buildBootPackage, isV2Enabled, runRecall } from "../memory/v2/recall";
 import { readDreamTimeZoneFromEnv } from "../memory/dailyDigest";
@@ -756,7 +755,7 @@ async function callTool(
     try {
       if (readBoolean(args.permanent)) return await callTool(env, ctx, profile, { name: "memory_delete", arguments: args });
       if (!isV2Enabled(env)) return toolError("memory_archive requires MEMORY_LIFECYCLE_ENABLED=true");
-      if (!await invalidateKnownInputs(env, { namespace, id }, "memory")) return toolError("Memory not found");
+      if (!await archiveMemory(env, { namespace, id, dismissCandidates: true })) return toolError("Memory not found");
       return textToolResult({ data: { id, archived: true } });
     } catch { return toolError("Memory cleanup incomplete; retry forget"); }
   }

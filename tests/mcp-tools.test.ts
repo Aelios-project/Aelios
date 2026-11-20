@@ -138,8 +138,18 @@ test("remember keeps world_fact as world knowledge; other free-form types still 
 test("forget archives by default and erases only when asked", async () => {
   memory("m-a", "一条要收起来的。");
   memory("m-b", "一条要删掉的。");
+  memory("m-context", "另一晚只读过旧记忆。");
+  sqlite.prepare("UPDATE memories SET provenance=? WHERE id='m-context'").run(JSON.stringify({inputs:[],context_refs:["memory:m-a"]}));
+  for (const target of ["m-a", "m-b"]) {
+    sqlite.prepare(`INSERT INTO memory_candidates(id,namespace,type,content,source,status,target_memory_id,created_at,updated_at)
+      VALUES(?,'default','note','待审','dream_update','pending',?,'now','now')`).run(`c-${target}`, target);
+  }
   assert.equal((await call("forget", { id: "m-a" })).structuredContent.data.archived, true);
   assert.equal(row("memories", "m-a").status, "archived");
+  assert.equal(row("memories", "m-context").status, "active");
+  assert.equal(row("memory_candidates","c-m-a").status, "discarded");
+  assert.equal(row("memory_candidates","c-m-b").status, "pending");
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM memory_revocations").get()?.n, 0);
   assert.equal((await call("forget", { id: "m-b", permanent: true })).structuredContent.data.deleted, true);
   assert.equal(row("memories", "m-b"), undefined);
   assert.equal((await call("forget", { id: "nope" })).isError, true);

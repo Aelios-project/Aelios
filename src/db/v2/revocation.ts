@@ -88,7 +88,7 @@ export async function invalidateKnownInputs(
       .bind(namespace),
     db
       .prepare(
-        `DELETE FROM daily_log WHERE namespace=?1 AND ${revoked("'day:' || daily_log.date || '@' || daily_log.updated_at")}`,
+        `UPDATE daily_log SET needs_rebuild=1, title='', summary='' WHERE namespace=?1 AND ${revoked("'day:' || daily_log.date || '@' || daily_log.updated_at")}`,
       )
       .bind(namespace),
   ];
@@ -143,6 +143,23 @@ export async function invalidateKnownInputs(
     .bind(namespace, ref)
     .run();
   return true;
+}
+
+/** Clean one raw line in the released DELETE route. Later explicit withdrawal can still
+ * follow its cited provenance inputs, even when the raw row is already gone. */
+export async function cleanRawMessage(db: D1Database, namespace: string, id: string): Promise<boolean> {
+  const statements = ["memories", "memory_candidates", "memory_revisions", "longtail", "daily_log"].map(table =>
+    db.prepare(`UPDATE ${table} SET source_message_ids=(
+      SELECT json_group_array(value) FROM json_each(source_message_ids) WHERE value<>?2)
+      WHERE namespace=?1 AND json_valid(source_message_ids)
+        AND EXISTS (SELECT 1 FROM json_each(source_message_ids) WHERE value=?2)`).bind(namespace, id));
+  const [message, archive] = await db.batch([
+    db.prepare("DELETE FROM messages WHERE namespace=? AND id=?").bind(namespace, id),
+    db.prepare("DELETE FROM chat_archive WHERE namespace=? AND id=?").bind(namespace, id),
+    db.prepare("DELETE FROM message_fts WHERE namespace=? AND message_id=?").bind(namespace, id),
+    ...statements
+  ]);
+  return Boolean(message.meta.changes || archive.meta.changes);
 }
 
 export async function revokedMemoryIds(

@@ -655,6 +655,7 @@ tailwind.config = { corePlugins: { preflight: false } };
                     <button type="button" x-show="(message.content || '').length > 320" @click="more = !more" class="link-btn mt-1" x-text="more ? L('收起', 'Show less') : L('展开', 'Show more')"></button>
                   </div>
                   <button type="button" @click="deleteRaw(message)" class="icon-btn mt-0.5" :aria-label="L('删掉这句', 'Delete this line')" :title="L('删掉这句', 'Delete this line')">${I.trash}</button>
+                  <button type="button" @click="deleteRaw(message, 'withdraw')" class="text-xs muted" x-text="L('撤回引用', 'Withdraw citations')"></button>
                   <button type="button" @click="togglePin(message)" class="heart" :class="isPinned(message) ? 'is-on' : ''" :aria-pressed="isPinned(message) ? 'true' : 'false'" :aria-label="isPinned(message) ? L('取消珍贵', 'Remove from keepsakes') : L('收藏为珍贵', 'Save as a keepsake')" :title="isPinned(message) ? L('取消珍贵', 'Remove from keepsakes') : L('收藏为珍贵', 'Save as a keepsake')">
                     <span x-show="isPinned(message)">${HEART_FILLED}</span><span x-show="!isPinned(message)">${I.heart}</span>
                   </button>
@@ -3243,10 +3244,14 @@ function memoryAdmin() {
     },
 
     // 报错、乱码、突然拒答这种不想留的原话：删了夜里整理、写日记和召回都不会再读到它。收进珍贵的那份不动。
-    async deleteRaw(message) {
-      if (!window.confirm(this.L('删掉这句？删了不能恢复。', 'Delete this line? This cannot be undone.'))) return;
+    async deleteRaw(message, mode) {
+      const withdraw = mode === 'withdraw';
+      const confirmation = withdraw
+        ? this.L('撤回这句及直接或间接引用它的记忆？相关日记将重新生成。', 'Withdraw this line and memories derived from it? Affected diaries will be rebuilt.')
+        : this.L('删掉这句？删了不能恢复。', 'Delete this line? This cannot be undone.');
+      if (!window.confirm(confirmation)) return;
       try {
-        await this.request(this.withNamespace('/v1/raw/' + encodeURIComponent(message.id)), { method: 'DELETE' });
+        await this.request(this.withNamespace('/v1/raw/' + encodeURIComponent(message.id) + (withdraw ? '?mode=withdraw' : '')), { method: 'DELETE' });
         this.todayMessages = this.todayMessages.filter(function(item) { return item.id !== message.id; });
         if (this.stats.today_raw_count) this.stats.today_raw_count -= 1;
         this.notify(this.L('删掉了', 'Deleted'));
