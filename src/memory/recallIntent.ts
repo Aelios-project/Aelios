@@ -34,21 +34,33 @@ const CURRENT_CUE = /现在|目前|当前|最新|\b(?:now|currently|at the momen
 const PAST_OR_VIEW_CUE =
   /\d{4}-\d{2}-\d{2}|\d{1,2}月\d{1,2}日|周[一二三四五六日天]|星期[一二三四五六日天]|昨天|前天|上周|上个月|当时|那时|以前|怎么想|觉得|看法|\b(?:yesterday|back then|previously|at the time|last\s+(?:week|month|mon|tue|wed|thu|fri|sat|sun)\w*|on\s+(?:mon|tue|wed|thu|fri|sat|sun)\w*|what did .{1,35} think)\b/i;
 const OPINION_OR_PREFERENCE_CUE =
-  /喜欢|偏好|觉得|怎么想|看法|\b(?:prefer|prefers|preferred|preference|preferences|like|likes|think|thinks|feel|feels|opinion|view)\b/i;
-const SECOND_PERSON_SUBJECT_CUE = /你|您|助手|\b(?:you|your|yourself|assistant)\b/i;
+  /喜欢|偏好|觉得|怎么想|看法|\b(?:prefer|prefers|preferred|preference|preferences|like|likes|think|thinks|feel|feels|opinion|view)\b/gi;
+// Whoever is named last before the preference word in its clause holds the preference:
+// "你现在喜欢哪种" asks the assistant, "你记得我现在喜欢哪种吗" asks about the user.
+const ASSISTANT_SUBJECT = /你|您|助手|\b(?:you|your|yourself|assistant)\b/gi;
+const USER_SUBJECT = /我|咱|\b(?:i|we|my|our|me|us)\b/gi;
+const CLAUSE_BREAK = /[，。！？；,.!?;\n]/g;
 
 function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function matchesAssistantName(query: string, assistantName: string | null | undefined): boolean {
+function namePattern(assistantName: string | null | undefined): RegExp | null {
   const name = assistantName?.trim();
-  if (!name) return false;
+  if (!name) return null;
   const escaped = escapeRegExp(name);
-  if (/^[a-z0-9._-]+$/i.test(name)) {
-    return new RegExp(`(?:^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`, "i").test(query);
-  }
-  return query.toLowerCase().includes(name.toLowerCase());
+  return /^[a-z0-9._-]+$/i.test(name) ? new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`, "gi") : new RegExp(escaped, "gi");
+}
+
+function lastIndexOf(pattern: RegExp, text: string): number {
+  let last = -1;
+  for (const match of text.matchAll(pattern)) last = match.index;
+  return last;
+}
+
+/** A preference or opinion word, whoever holds it. */
+export function mentionsPreference(query: string): boolean {
+  return query.search(OPINION_OR_PREFERENCE_CUE) >= 0;
 }
 
 export function asksCurrent(query: string): boolean {
@@ -59,9 +71,16 @@ export function asksPastOrView(query: string): boolean {
   return PAST_OR_VIEW_CUE.test(query);
 }
 
+/** True when some clause asks what the assistant (second person or its configured name) prefers or thinks. */
 export function asksAssistantView(query: string, assistantName?: string | null): boolean {
-  if (!OPINION_OR_PREFERENCE_CUE.test(query)) return false;
-  return SECOND_PERSON_SUBJECT_CUE.test(query) || matchesAssistantName(query, assistantName);
+  const name = namePattern(assistantName);
+  return query.split(CLAUSE_BREAK).some((clause) => {
+    const cue = lastIndexOf(OPINION_OR_PREFERENCE_CUE, clause);
+    if (cue < 0) return false;
+    const before = clause.slice(0, cue);
+    const assistant = Math.max(lastIndexOf(ASSISTANT_SUBJECT, before), name ? lastIndexOf(name, before) : -1);
+    return assistant >= 0 && assistant > lastIndexOf(USER_SUBJECT, before);
+  });
 }
 
 export function isProvenanceSelectionOn(env: Pick<Env, "RECALL_PROVENANCE_SELECTION">): boolean {

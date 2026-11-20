@@ -12,7 +12,7 @@ import { newId } from "../utils/ids";
 import { nowIso } from "../utils/time";
 import { cleanMessageText } from "../utils/sanitize";
 import { codingClient, codingSpeech, recallWords, stripCodeBlocks } from "./coding";
-import { findIdentity, identityNamespace, identityReadNamespaces, isMainModel, loadConfig, type GatewayConfig, type Identity, type Protocol } from "./config";
+import { assistantNameOf, findIdentity, identityNamespace, identityReadNamespaces, isMainModel, loadConfig, type GatewayConfig, type Identity, type Protocol } from "./config";
 import { classifyTurn, hasServerState, inputItems, recentHumanTexts, validateBody, visibleText, type Body, type Turn } from "./protocol";
 import { RequestContractError } from "./request";
 import { dispatchExchange, persistExchange, persistHumanUtterance, observeResponse, prepareExchange, settleExchange, type GatewayExchange, type OutputCollector } from "./record";
@@ -70,6 +70,7 @@ export async function recallPatch(
         skip_inject_mark: true,
         grounded: false,
         attach_week_blocks: temporal,
+        assistant_name: assistantNameOf(identity),
         waitUntil: promise => ctx.waitUntil(promise.catch(() => console.error("gateway recall accounting failed")))
       }),
       evidence

@@ -264,6 +264,23 @@ test("assistant preference questions use second person and configured namespace 
     assert.equal(hits[0].current_state?.by, decision.id);
   }
 
+  // "你" addresses the assistant; the preference belongs to whoever is its subject.
+  for (const question of [
+    "你记得我现在喜欢哪种吗",
+    "我现在喜欢用哪个，你还记得吗",
+    "Do you remember which SDK I prefer now?",
+    "what do you think I prefer now"
+  ]) {
+    const hits = await annotateCurrentState(env, "studio", [prefHit()], question, false, 2);
+    assert.equal(hits[0].id, decision.id, `"${question}" asks about the user's own preference`);
+  }
+
+  // The gateway passes the name it already has; null means none, so config is not consulted.
+  const named = await annotateCurrentState(env, "studio", [decisionHit, prefHit()], "Kestrel现在喜欢哪种", false, 2, "Kestrel");
+  assert.deepEqual(named.map((item) => item.id), ["pref"]);
+  const unnamed = await annotateCurrentState(env, "studio", [decisionHit, prefHit()], "Kestrel现在喜欢哪种", false, 2, null);
+  assert.equal(unnamed[0].id, decision.id);
+
   sqlite
     .prepare(
       `INSERT INTO memories(id,namespace,type,source,content,authored_by,created_at,updated_at)

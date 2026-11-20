@@ -1,7 +1,7 @@
 import { fetchMemoriesWithLifecycleByIds } from "../../db/memories";
-import { identityNamespace, loadConfig, speakersForNamespace } from "../../gateway/config";
+import { assistantNameOf, identityNamespace, loadConfig } from "../../gateway/config";
 import type { Env, MemoryApiRecord } from "../../types";
-import { isProvenanceSelectionOn, readRecallIntent, type RecallIntent } from "../recallIntent";
+import { asksAssistantView, isProvenanceSelectionOn, mentionsPreference, readRecallIntent, type RecallIntent } from "../recallIntent";
 import { toMemoryApiRecord } from "../search";
 import type { RecallHit } from "../v2/recall";
 
@@ -16,14 +16,23 @@ export function isCurrentStateEnabled(
 
 async function loadAssistantName(env: Env, namespace: string): Promise<string | null> {
   try {
-    const config = await loadConfig(env);
-    const speakers = speakersForNamespace(config, namespace);
-    if (speakers?.assistantName) return speakers.assistantName;
-    const identity = config.identities.find((item) => identityNamespace(item) === namespace);
-    return identity?.assistantName?.trim() || null;
+    const identities = (await loadConfig(env)).identities.filter((item) => identityNamespace(item) === namespace);
+    const named = identities.find((item) => item.userName?.trim()) ?? identities[0];
+    return named ? assistantNameOf(named) : null;
   } catch {
     return null;
   }
+}
+
+/**
+ * A configured name can only add an assistant subject, so the config is read only when the
+ * wording alone does not already settle it and the question mentions a preference at all.
+ * `assistantName` undefined means the caller does not know it (MCP, REST); null means none.
+ */
+async function readIntent(env: Env, namespace: string, query: string, assistantName?: string | null): Promise<RecallIntent> {
+  const intent = readRecallIntent(env, query, assistantName);
+  if (assistantName !== undefined || intent.asksAssistantView || !mentionsPreference(query)) return intent;
+  return { ...intent, asksAssistantView: asksAssistantView(query, await loadAssistantName(env, namespace)) };
 }
 
 interface DecisionLink {
@@ -95,16 +104,14 @@ export async function annotateCurrentState(
   env: Env,
   namespace: string,
   hits: RecallHit[],
-  queryOrIntent: string | RecallIntent,
+  query: string,
   history: boolean,
-  k: number
+  k: number,
+  assistantName?: string | null
 ): Promise<RecallHit[]> {
   if (!isCurrentStateEnabled(env) || !hits.length) return hits;
 
-  const intent =
-    typeof queryOrIntent === "string"
-      ? readRecallIntent(env, queryOrIntent, await loadAssistantName(env, namespace))
-      : queryOrIntent;
+  const intent = await readIntent(env, namespace, query, assistantName);
 
   const nominated = hits.filter((hit) => hit.source_layer === "memory" && hit.backed);
   const rows = nominated.length
