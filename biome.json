@@ -1,41 +1,40 @@
 {
-  "$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-  "files": {
-    "ignore": [
-      "node_modules",
-      ".agents",
-      "migrations",
-      "docs",
-      "scripts/eval",
-      "src/api/admin/ui.ts",
-      "src/api/admin/starmap.ts"
-    ]
-  },
-  "organizeImports": {
-    "enabled": false
-  },
-  "linter": {
-    "enabled": true,
-    "rules": {
-      "recommended": true,
-      "performance": {
-        "noDelete": "off"
-      },
-      "style": {
-        "noNonNullAssertion": "warn"
-      }
-    }
-  },
-  "overrides": [
-    {
-      "include": ["tests/**"],
-      "linter": {
-        "rules": {
-          "suspicious": {
-            "noExplicitAny": "off"
-          }
-        }
-      }
-    }
-  ]
+	"$schema": "https://biomejs.dev/schemas/2.6.8/schema.json",
+	"files": {
+		"includes": [
+			"**",
+			"!**/node_modules",
+			"!**/.agents",
+			"!**/migrations",
+			"!**/docs",
+			"!**/scripts/eval",
+			"!**/src/api/admin/ui.ts",
+			"!**/src/api/admin/starmap.ts"
+		]
+	},
+	"assist": { "actions": { "source": { "organizeImports": "off" } } },
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"performance": {
+				"noDelete": "off"
+			},
+			"style": {
+				"noNonNullAssertion": "warn"
+			}
+		}
+	},
+	"overrides": [
+		{
+			"includes": ["**/tests/**"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noExplicitAny": "off"
+					}
+				}
+			}
+		}
+	]
 }
