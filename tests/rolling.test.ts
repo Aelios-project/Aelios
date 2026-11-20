@@ -302,6 +302,51 @@ test("A1 nightly skips a fresh live claim and can take over an expired lease wit
   assert.ok((await claimRollingWindow(env, "default", "on")).claim);
 });
 
+test("late nightly batches extract candidates without replacing an existing diary draft", async (t) => {
+  const { sqlite, db } = sqliteFixture(t);
+  const env = { ...shadowEnv(db), ROLLING_DREAM: "off", DREAM_TIME_ZONE: "UTC", DREAM_STRATEGY: "upsert" };
+  insertLine(sqlite, "early", "The observatory opened.");
+  env.AI = { async run(_model: string, input: { messages?: Array<{ content: string }> }) {
+    const [system, body] = input.messages ?? [];
+    if (!system) return { data: [[1, 0]] };
+    const late = body.content.includes("The lens arrived.");
+    if (system.content.includes("不要输出思考过程")) {
+      return { response: {
+        title: late ? "Late draft" : "Existing diary", summary: late ? "Only the lens." : "Full-day summary.",
+        source_message_ids: late ? ["late"] : ["early"]
+      } };
+    }
+    return { response: { memories: late ? [{
+      type: "event", content: "The lens arrived.", attributed_role: "user",
+      evidence_quote: "The lens arrived.", source_message_ids: ["late"]
+    }] : [] } };
+  } } as Env["AI"];
+  assert.equal((await runDailyMemoryDigest(env, "default", { dateLabel: SYNTHETIC_DAY })).ran, true);
+  const journal = sqlite.prepare("SELECT title,summary,source_message_ids FROM daily_log");
+  const before = journal.get();
+  assert.equal(before?.title, "Existing diary");
+  insertLine(sqlite, "late", "The lens arrived.", { at: "2026-11-17T11:00:00.000Z" });
+  assert.equal((await runDailyMemoryDigest(env, "default", { dateLabel: SYNTHETIC_DAY })).ran, true);
+  assert.deepEqual(journal.get(), before);
+  assert.equal(sqlite.prepare("SELECT content FROM memory_candidates").get()?.content, "The lens arrived.");
+});
+
+test("a short rolling lease cannot cut off an in-progress nightly batch", async (t) => {
+  const { sqlite, db } = sqliteFixture(t);
+  const env = { ...shadowEnv(db), ROLLING_CLAIM_TTL_MINUTES: "1" };
+  insertLine(sqlite, "one", "First line.");
+  insertLine(sqlite, "two", "Second line.");
+  const rows = sqlite.prepare("SELECT * FROM messages ORDER BY id").all() as unknown as MessageRecord[];
+  const claim = await claimNightlyExtraction(env, "default", rows, { dateLabel: SYNTHETIC_DAY, dreamRunId: "first" }, false);
+  assert.equal(claim.held, true);
+  sqlite.prepare("UPDATE rolling_inbox SET claimed_at=?").run(new Date(Date.now() - 5 * 60_000).toISOString());
+  const other = { dateLabel: SYNTHETIC_DAY, dreamRunId: "other" };
+  assert.equal((await claimNightlyExtraction(env, "default", rows, other, false)).blocked, true);
+  assert.equal((await claimRollingWindow(env, "default", "on")).claim, undefined);
+  sqlite.exec("UPDATE rolling_inbox SET claimed_at='2000-01-01T00:00:00.000Z'");
+  assert.equal((await claimNightlyExtraction(env, "default", rows, other, false)).held, true);
+});
+
 test("A3 settings and existing Dream endpoints report modes, retry failures, and comparisons", async (t) => {
   const { sqlite, db } = sqliteFixture(t);
   const env = { ...shadowEnv(db), CHATBOX_API_KEY: "synthetic-secret", DREAM_TIME_ZONE: "UTC", ROLLING_MAX_ATTEMPTS: "1" };
@@ -309,7 +354,8 @@ test("A3 settings and existing Dream endpoints report modes, retry failures, and
   insertLine(sqlite, "b", "Second.");
   await runRollingWindow(env, "default", { triage: { async classify() { return null; } } });
   assert.deepEqual(validateSettings({ ROLLING_DREAM: "shadow" }), { ROLLING_DREAM: "shadow" });
-  assert.throws(() => validateSettings({ ROLLING_DREAM: "invalid" }), /off, shadow, on/);
+  assert.throws(() => validateSettings({ ROLLING_DREAM: "invalid" }), /off, shadow/);
+  assert.throws(() => validateSettings({ ROLLING_DREAM: "on" }), /off, shadow$/);
   assert.match(ADMIN_HTML, /settingOption\(item\)/);
   assert.match(ADMIN_HTML, /What rolling would write/);
   const req = (path: string) => new Request(`https://synthetic.invalid${path}`, { headers: { authorization: "Bearer synthetic-secret" } });

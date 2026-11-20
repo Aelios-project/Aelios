@@ -161,8 +161,8 @@ async function performDailyMemoryDigest(
   }
   const claim = dryRun ? null : await claimNightlyExtraction(env, namespace, fetchedMessages, run, options.force === true);
   if (claim?.blocked) {
-    await safeFinishDreamRun(env.DB, { id: dreamRunId, status: "skipped", reason: "rolling_window_busy" });
-    return { ran: false, mode: "dream", date: dateLabel, reason: "rolling_window_busy", startIso, endIso, cursor };
+    await safeFinishDreamRun(env.DB, { id: dreamRunId, status: "skipped", reason: "inbox_claimed" });
+    return { ran: false, mode: "dream", date: dateLabel, reason: "inbox_claimed", startIso, endIso, cursor };
   }
   try {
     return await processDailyDigestBatch(env, namespace, run, {
@@ -359,7 +359,8 @@ async function processDailyDigestBatch(
     messageIds,
     extracted: extractedMemories,
     contextMemoryIds: existingMemories.filter(m => m.namespace === namespace).map(m => m.id),
-    requireCommit: claim?.held
+    requireCommit: claim?.held,
+    writeDailyDraft: !lateBatch
   }) : { added: 0, updated: 0, deleted: 0, queuedCandidates: 0, errors: [] };
   await markNightlyExtracted(env.DB, namespace, claim, messageIds);
   const pending = hasMore || (await listNightlyInboxBacklog(env.DB, namespace, startIso, endIso, 1)).length > 0;

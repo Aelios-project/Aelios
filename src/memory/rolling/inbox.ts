@@ -1,3 +1,4 @@
+import { DREAM_RUN_STALE_MS } from "../../db/dreamRuns";
 import { identityNamespace, isMainModel, loadConfig, type Identity } from "../../gateway/config";
 import type { Env, RollingWindowQueueMessage } from "../../types";
 import { sha256Hex } from "../../utils/hash";
@@ -55,6 +56,10 @@ interface ExistingWindow {
 
 export function staleClaimBefore(env: Env): string {
   return new Date(Date.now() - rollingSettings(env).claimTtlMinutes * 60_000).toISOString();
+}
+
+export function staleNightlyClaimBefore(): string {
+  return new Date(Date.now() - DREAM_RUN_STALE_MS).toISOString();
 }
 
 function eligible(row: InboxHead, identities: Identity[]): boolean {
@@ -189,7 +194,8 @@ export async function claimRollingWindow(env: Env, namespace: string, lane: Roll
     WHERE seq IN ready AND (SELECT COUNT(*) FROM ready)=?7
       AND NOT EXISTS (SELECT 1 FROM rolling_inbox
         WHERE namespace=?1 AND ${col.done} IS NULL AND ${col.key} GLOB 'rolling_*' AND ${col.key}<>?4)`)
-      .bind(namespace, JSON.stringify(heads.map((row) => row.inbox_seq)), before, key, at, JSON.stringify(progress), heads.length);
+      .bind(namespace, JSON.stringify(heads.map((row) => row.inbox_seq)),
+        lane === "on" ? staleNightlyClaimBefore() : before, key, at, JSON.stringify(progress), heads.length);
   }
   const [leased, selected] = await env.DB.batch<InboxMessage & { attempts: number }>([
     lease,

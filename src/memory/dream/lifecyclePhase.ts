@@ -34,6 +34,7 @@ export async function applyDreamV2(
     contextMemoryIds?: string[];
     extracted: ExtractedMemory[];
     requireCommit?: boolean;
+    writeDailyDraft?: boolean;
   }
 ): Promise<{
   added: number;
@@ -180,14 +181,16 @@ export async function applyDreamV2(
     }
   }
 
-  await upsertDailyLog(env.DB, {
-    namespace,
-    date: dateLabel,
-    title: digest.title ?? dateLabel,
-    summary: digest.summary ?? "",
-    sourceMessageIds: evidence(digest.source_message_ids),
-    contextRefs: origin(digest.source_message_ids).context_refs
-  });
+  if (input.writeDailyDraft !== false) {
+    await upsertDailyLog(env.DB, {
+      namespace,
+      date: dateLabel,
+      title: digest.title ?? dateLabel,
+      summary: digest.summary ?? "",
+      sourceMessageIds: evidence(digest.source_message_ids),
+      contextRefs: origin(digest.source_message_ids).context_refs
+    });
+  }
 
   return { added: 0, updated, deleted, queuedCandidates, longtail: 0, errors };
 }
@@ -204,6 +207,7 @@ export async function runLifecyclePhase(
     contextMemoryIds?: string[];
     extracted: ExtractedMemory[];
     requireCommit?: boolean;
+    writeDailyDraft?: boolean;
   }
 ): Promise<Awaited<ReturnType<typeof applyDreamV2>>> {
   return applyDreamV2(env, input);

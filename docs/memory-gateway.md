@@ -352,6 +352,8 @@ The setting defaults to off. `RECALL_PROVENANCE_SELECTION=false` also disables p
 
 `ROLLING_DREAM` defaults to `off`. Turn on `shadow` in the gateway settings to see draft events beside nightly outputs on the Dream page. Shadow records its own progress, and nightly Dream still processes the same conversations. The Dream page reports inbox backlog, recent windows, call counts, and failed windows.
 
+Shadow uses Clef-flash for triage and `DREAM_MODEL` for windows selected for extraction. A `chatgpt/...` Dream route uses the same plan allowance for shadow and nightly calls.
+
 Migration `0028_rolling_inbox.sql` adds an inbox for newly recorded messages. Older messages follow the nightly cursor. New windows follow insertion order and open at 10 messages or 8,000 characters by default. A single oversized message is split at code point boundaries. Rolling runs through the existing queue. Each successful Clef-flash classification gates the Dream model, and explicit decision cues also trigger a model check. The raw message remains searchable within its usual retention period.
 
 The nightly pipeline records completion after applying its output. Shadow uses separate checkpoints so it can be enabled and disabled without affecting nightly ownership. Set `ROLLING_DREAM=off` to return to nightly-only processing. Leave the additive migration in place. In this release, the settings page exposes `off` and `shadow`; live rolling writes arrive in the next stage.
