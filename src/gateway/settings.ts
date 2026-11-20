@@ -11,6 +11,7 @@ export interface SettingOption {
   labelEn: string;
   hint?: string;
   hintEn?: string;
+  disabled?: boolean;
 }
 export interface SettingSpec {
   name: string; label: string; hint?: string; group: string;
@@ -75,8 +76,8 @@ export const SETTINGS: SettingSpec[] = [
     name: "ROLLING_DREAM",
     label: "滚动整理模式",
     labelEn: "Rolling memory mode",
-    hint: "默认关闭。影子模式只记录本会写入的内容用于和夜间对比；开启后按窗口实时整理，夜间只处理尾巴并写日记。",
-    hintEn: "Off by default. Shadow logs what rolling would write for A/B comparison without writing memories; On extracts in rolling windows while nightly Dream handles only tail messages and the journal.",
+    hint: "默认关闭。影子模式把滚动整理拟写的事件与夜间产出并排展示。",
+    hintEn: "Off by default. Shadow shows rolling drafts alongside nightly Dream outputs.",
     kind: "select",
     defaultValue: "off",
     common: true,
@@ -92,8 +93,8 @@ export const SETTINGS: SettingSpec[] = [
         value: "shadow",
         label: "影子对比 (shadow)",
         labelEn: "Shadow (read-only)",
-        hint: "只记录滚动分诊和本会写入的事件，不改记忆和候选表，夜间照常处理全部消息。",
-        hintEn: "Runs triage and extraction in shadow events only; memories and candidates stay untouched while nightly Dream runs normally."
+        hint: "每窗调用 Clef-flash 分诊，通过的窗口用 DREAM_MODEL 抽取。若配置 chatgpt/...，影子抽取与夜间 Dream 共用套餐额度。夜间照常运行，影子结果供对比。",
+        hintEn: "Each window uses Clef-flash triage. Selected windows call DREAM_MODEL. A chatgpt/... route shares plan usage with nightly Dream. Nightly Dream runs as usual and shadow drafts are available for comparison."
       },
       {
         value: "on",
@@ -223,8 +224,11 @@ export function validateSettings(value: unknown): Record<string, string> {
       throw new Error(`${name}: enter a whole number from 0 to 36500`);
     }
     const spec = SETTINGS.find(s => s.name === name);
-    if (spec?.kind === "select" && spec.options?.length && !spec.options.some(option => option.value === trimmed)) {
-      throw new Error(`${name}: must be one of ${spec.options.map(option => option.value).join(", ")}`);
+    if (spec?.kind === "select" && spec.options?.length) {
+      const available = spec.options.filter(option => !option.disabled);
+      if (!available.some(option => option.value === trimmed)) {
+        throw new Error(`${name}: must be one of ${available.map(option => option.value).join(", ")}`);
+      }
     }
     out[name] = trimmed;
   }

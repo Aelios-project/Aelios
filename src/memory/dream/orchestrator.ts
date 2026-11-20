@@ -39,7 +39,7 @@ import {
 } from "./helpers";
 import { buildDreamRoutingPlan, runJudgePhase } from "./judgePhase";
 import { runLifecyclePhase } from "./lifecyclePhase";
-import { claimNightlyExtraction, listNightlyInboxBacklog, markNightlyExtracted, refreshNightlyClaim, releaseNightlyExtraction } from "../rolling/nightly";
+import { claimNightlyExtraction, hasLiveCoverage, listNightlyInboxBacklog, markNightlyExtracted, refreshNightlyClaim, releaseNightlyExtraction } from "../rolling/nightly";
 import { recoverRollingCommit } from "../rolling/runner";
 import { scheduleRollingWindow } from "../rolling/inbox";
 
@@ -166,8 +166,8 @@ async function performDailyMemoryDigest(
     claim = await claimNightlyExtraction(env, namespace, fetchedMessages, run, options.force === true);
   }
   if (claim?.blocked) {
-    await safeFinishDreamRun(env.DB, { id: dreamRunId, status: "skipped", reason: "rolling_window_busy" });
-    return { ran: false, mode: "dream", date: dateLabel, reason: "rolling_window_busy", startIso, endIso, cursor };
+    await safeFinishDreamRun(env.DB, { id: dreamRunId, status: "skipped", reason: "inbox_claimed" });
+    return { ran: false, mode: "dream", date: dateLabel, reason: "inbox_claimed", startIso, endIso, cursor };
   }
   try {
     return await processDailyDigestBatch(env, namespace, run, {
@@ -367,7 +367,8 @@ async function processDailyDigestBatch(
     messageIds,
     extracted: extractedMemories,
     contextMemoryIds: existingMemories.filter(m => m.namespace === namespace).map(m => m.id),
-    guard: await refreshNightlyClaim(env.DB, namespace, claim, messageIds)
+    guard: await refreshNightlyClaim(env.DB, namespace, claim, messageIds),
+    writeDailyDraft: !lateBatch && (strategy === "review" || !await hasLiveCoverage(env.DB, namespace, startIso, endIso))
   }) : { added: 0, updated: 0, deleted: 0, queuedCandidates: 0, errors: [] };
   await markNightlyExtracted(env.DB, namespace, claim, messageIds);
   const pending = hasMore || (await listNightlyInboxBacklog(env.DB, namespace, startIso, endIso, 1)).length > 0;

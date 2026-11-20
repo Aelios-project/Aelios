@@ -45,7 +45,7 @@ async function applyEvent(env: Env, claim: RollingClaim, draft: RollingDraft, ev
     attributed_actor: event.attributed_role ?? "unknown",
     evidence_relation: "paraphrase"
   });
-  if (date && event.episode_key && (event.op === "continuation" || event.op === "new")) {
+  if (date && event.episode_key && event.op === "continuation") {
     const prior = await findEpisodeCandidate(db, namespace, event.episode_key, date);
     if (prior?.status === "pending") {
       const current = await extendDreamCandidate(db, prior, {

@@ -40,18 +40,21 @@ function captureNightly(env: Env, seen: string[]) {
 
 test("P2-b nightly model reads only the tail and the journal still reads the entire retained day", async (t) => {
   const { sqlite, db } = sqliteFixture(t);
-  const env = liveEnv(db);
+  const env = { ...liveEnv(db), DREAM_STRATEGY: "upsert" };
   insertLine(sqlite, "win_1", "Rolling first.");
   insertLine(sqlite, "win_2", "Rolling second.");
   insertLine(sqlite, "tail", "Nightly tail.");
   assert.equal((await runRollingWindow(env, "default", { triage, extractor: { async extract(packet) { return proposal(packet); } } })).extracted, true);
   assert.equal((await runRollingWindow(env, "default")).reason, "no_window");
+  sqlite.prepare(`INSERT INTO daily_log(namespace,date,title,summary,updated_at)
+    VALUES('default',?,'Existing diary','Whole day',?)`).run(SYNTHETIC_DAY, SYNTHETIC_AT);
   const prompts: string[] = [];
   captureNightly(env, prompts);
   assert.equal((await runDailyMemoryDigest(env, "default", { dateLabel: SYNTHETIC_DAY })).ran, true);
   assert.equal(prompts.length, 1);
   assert.match(prompts[0], /Nightly tail/);
   assert.doesNotMatch(prompts[0], /Rolling first|Rolling second/);
+  assert.equal(sqlite.prepare("SELECT summary FROM daily_log").get()?.summary, "Whole day");
   let diary = "";
   env.AI = { async run(_model: string, input: { messages: Array<{ content: string }> }) {
     diary = input.messages[1].content;

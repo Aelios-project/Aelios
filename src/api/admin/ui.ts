@@ -79,7 +79,7 @@ const SETTING_ROW = String.raw`<div class="set-row" :title="item.name">
                 <template x-if="item.kind === 'select'">
                   <select :id="'setting-' + item.name" @change="saveSetting(item, $event.target.value)" :disabled="item.busy" class="field set-input">
                     <template x-for="option in item.options" :key="option.value">
-                      <option :value="option.value" :selected="option.value === settingOption(item)" x-text="L(option.label, option.labelEn)"></option>
+                      <option :value="option.value" :disabled="option.disabled" :selected="option.value === settingOption(item)" x-text="L(option.label, option.labelEn)"></option>
                     </template>
                   </select>
                 </template>
@@ -4167,7 +4167,7 @@ function memoryAdmin() {
       return Math.floor(sec / 60) + 'm' + String(sec % 60).padStart(2, '0') + 's';
     },
     dreamReasonLabel(reason) {
-      if (reason === 'rolling_window_busy') return this.L('这批消息正在滚动整理，可稍后补跑', 'A rolling window has claimed this batch. Try again later.');
+      if (reason === 'inbox_claimed') return this.L('这批消息正由另一个整理任务处理，可稍后补跑', 'Another Dream task has claimed this batch. Try again later.');
       const zh = {
         already_done: '这一晚已经整理过了',
         no_messages: '没有新消息',

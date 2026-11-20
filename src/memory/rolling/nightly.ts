@@ -1,7 +1,7 @@
 import type { Env, MessageRecord } from "../../types";
 import { newId } from "../../utils/ids";
 import { nowIso } from "../../utils/time";
-import { staleClaimBefore } from "./inbox";
+import { staleClaimBefore, staleNightlyClaimBefore } from "./inbox";
 
 interface NightlyClaim {
   key: string;
@@ -20,6 +20,13 @@ export async function listNightlyInboxBacklog(
   return rows.results;
 }
 
+export async function hasLiveCoverage(db: D1Database, namespace: string, startIso: string, endIso: string): Promise<boolean> {
+  const row = await db.prepare(`SELECT 1 FROM messages m JOIN rolling_inbox i ON i.namespace=m.namespace AND i.message_id=m.id
+    WHERE m.namespace=? AND m.created_at>=? AND m.created_at<? AND i.done_at IS NOT NULL
+      AND i.window_key GLOB 'rolling_*' LIMIT 1`).bind(namespace, startIso, endIso).first();
+  return Boolean(row);
+}
+
 export async function claimNightlyExtraction(
   env: Env,
   namespace: string,
@@ -33,7 +40,8 @@ export async function claimNightlyExtraction(
   const [, rows] = await env.DB.batch<{ message_id: string; window_key: string | null; done_at: string | null }>([
     env.DB.prepare(`WITH busy AS MATERIALIZED (
       SELECT 1 FROM rolling_inbox WHERE namespace=?1 AND done_at IS NULL
-        AND (claimed_at>=?3 OR json_extract(progress,'$.committing')=1)
+        AND (claimed_at >= CASE WHEN window_key LIKE 'nightly:%' THEN ?6 ELSE ?3 END
+          OR json_extract(progress,'$.committing')=1)
         AND message_id IN (SELECT value FROM json_each(?2)) LIMIT 1
     ), abandoned(key) AS MATERIALIZED (
       SELECT DISTINCT window_key FROM rolling_inbox WHERE namespace=?1 AND done_at IS NULL
@@ -45,7 +53,7 @@ export async function claimNightlyExtraction(
       progress=NULL,attempts=0
     WHERE namespace=?1 AND (message_id IN (SELECT value FROM json_each(?2)) OR window_key IN abandoned)
       AND done_at IS NULL AND NOT EXISTS (SELECT 1 FROM busy)`)
-      .bind(namespace, ids, before, key, nowIso()),
+      .bind(namespace, ids, before, key, nowIso(), staleNightlyClaimBefore()),
     env.DB.prepare(`SELECT message_id,window_key,done_at FROM rolling_inbox
       WHERE namespace=? AND message_id IN (SELECT value FROM json_each(?))`).bind(namespace, ids),
     env.DB.prepare(`DELETE FROM memory_events AS e WHERE e.namespace=? AND e.event_type='rolling_draft'
