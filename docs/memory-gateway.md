@@ -336,9 +336,11 @@ Dream 沿用原来的抽取批次和审核队列。新抽取要把角色和引�
 
 Preview upgrades also apply 0025. A preview digest sometimes copied the entire batch into its diary citation list. Where that list cannot be distinguished from a diary citing every line, the old text and IDs stay in storage for audit. The diary is hidden until backfill can rebuild it from surviving messages.
 
+Migration 0026 also removes similarity-only predecessor edges from identifiable preview approvals and revisions. The version chain still records which entry they replaced.
+
 ### Dream v3 experiments
 
-These settings are opt-in. Apply migrations through 0026 before enabling them.
+These settings are opt-in. Apply migrations through 0027 before enabling them.
 
 | Setting | Behavior |
 | --- | --- |

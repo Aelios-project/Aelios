@@ -482,12 +482,8 @@ export async function supersedeMemory(
     }
   }
   const newFactKey = inheritedFactKey;
-  const origin = input.provenance;
-  // The reviewer/digest saw this specific predecessor. A hand-written replacement
-  // has its own content and retains just the ordinary version link.
-  const provenance = old && origin && (origin.candidate_id || origin.creation_mode === "dream_derived")
-    ? { ...origin, inputs: [...new Set([...(origin.inputs ?? []), `memory:${old.id}`])] }
-    : origin;
+  // Version succession alone is not evidence. Digest updates supply their cited target at extraction.
+  const provenance = input.provenance;
 
   // A rejected candidate or a concurrent forget must roll back the entire transition.
   const statements: D1PreparedStatement[] = [];

@@ -85,7 +85,7 @@ export function isExplicitMemory(row: {source?: string | null; authored_by?: str
 }
 
 export function reviewedOrigin(
-  candidate: { id: string; source: string; provenance?: string | null },
+  candidate: { id: string; source: string; target_memory_id?: string | null; provenance?: string | null },
   reviewer: string,
   edited = false,
 ): MemoryProvenance {
@@ -101,6 +101,8 @@ export function reviewedOrigin(
         } as const));
   return {
     ...origin,
+    ...(candidate.source === "dream_update" && candidate.target_memory_id
+      ? {inputs:[...new Set([...("inputs" in origin ? origin.inputs ?? [] : []), `memory:${candidate.target_memory_id}`])]} : {}),
     recording_actor: reviewer,
     candidate_id: candidate.id,
     ...(edited ? ({ attributed_actor: "unknown", evidence_relation: "interpretation" } as const) : {}),
