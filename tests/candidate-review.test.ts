@@ -416,3 +416,24 @@ test("a replayed Dream extraction does not re-enqueue an approved utterance, or 
   assert.deepEqual(origin.inputs, ["message:m1"]);
   assert.deepEqual(origin.context_refs, ["message:m2"]);
 });
+
+test("approving an independent extract against a similar target keeps a version link without cascading through it", async () => {
+  const { dreamOrigin } = await import("../src/memory/provenance");
+  const { invalidateKnownInputs } = await import("../src/db/v2/revocation");
+  message("m1", "user", "现在明确叫小九。");
+  memory("similar", "先前讨论称呼", "nickname");
+  candidate("new-name", "现在明确叫小九。", { source: "dream_extract", target: "similar", fact_key: "nickname" });
+  sqlite.prepare("UPDATE memory_candidates SET provenance=? WHERE id='new-name'").run(JSON.stringify(dreamOrigin(["m1"])));
+  clefAnswers.push(yes());
+  assert.equal((await runCandidateJudge(env, "default")).approved, 1);
+  const id = row("memory_candidates","new-name").target_memory_id;
+  assert.deepEqual(JSON.parse(row("memories",id).provenance).inputs, ["message:m1"]);
+  assert.equal(row("memory_lifecycle",id,"memory_id").supersedes_id, "similar");
+  // Upgrade the same approval as it would have been written by the preview.
+  sqlite.prepare("UPDATE memories SET provenance=json_insert(provenance,'$.inputs[#]','memory:similar') WHERE id=?").run(id);
+  sqlite.exec(readFileSync("migrations/0026_review_evidence.sql","utf8"));
+  assert.ok(await invalidateKnownInputs(env,{namespace:"default",id:"similar"},"memory"));
+  assert.equal(row("memories",id).status,"active");
+  assert.ok(await invalidateKnownInputs(env,{namespace:"default",id:"m1"},"message"));
+  assert.equal(row("memories",id).status,"archived");
+});
