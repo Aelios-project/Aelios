@@ -350,11 +350,11 @@ The setting defaults to off. `RECALL_PROVENANCE_SELECTION=false` also disables p
 
 ### Rolling memory
 
-Daytime Dream is the `ROLLING_DREAM` switch in the gateway settings, off by default (`on`, `true`, `1` turn it on). While it is off, nightly Dream processes every conversation as before. The Dream page reports whether it is on, the inbox backlog, recent windows, call counts and failed windows.
+Daytime Dream is the `ROLLING_DREAM` switch in the gateway settings, on by default (`off`, `false`, `0` or `no` turn it off). While it is off, nightly Dream processes every conversation as before. The five `ROLLING_*` tuning settings fold under the switch on the settings page. On the Workers Free plan, daytime calls use the same 10,000 daily neurons as the nightly run. The Dream page reports whether it is on, the inbox backlog, recent windows, call counts and failed windows.
 
 It uses Clef-flash for triage and `DREAM_MODEL` for windows selected for extraction. A `chatgpt/...` Dream route uses the same plan allowance for daytime and nightly calls.
 
-Earlier releases had a read-only `shadow` value for comparing drafts with nightly outputs. It is gone: a saved `shadow` reads as off, and migration `0029_drop_rolling_shadow.sql` removes its columns, draft events, navigation state and saved setting.
+Earlier releases had a read-only `shadow` value for comparing drafts with nightly outputs. It is gone. Migration `0029_drop_rolling_shadow.sql` removes its columns, draft events and navigation state, and turns a saved `shadow` into `false`, since shadow never wrote anything and must not start writing because the new default is on.
 
 Migration `0028_rolling_inbox.sql` adds an inbox for newly recorded messages. Older messages follow the nightly cursor. New windows follow insertion order and open at 10 messages or 8,000 characters by default. A single oversized message is split at code point boundaries. Rolling runs through the existing queue. Each successful Clef-flash classification gates the Dream model, and explicit decision cues also trigger a model check. The raw message remains searchable within its usual retention period.
 

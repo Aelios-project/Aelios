@@ -59,10 +59,24 @@ export const ADMIN_SCRIPT_SETTINGS = String.raw`    async init() {
     gwItems() {
       return this.gwGroups.reduce(function(all, g) { return all.concat(g.items); }, []);
     },
+    // 挂在某个开关下面的细项（under），跟着那个开关显示，默认收起。
+    gwChildren(name) {
+      return this.gwItems().filter(function(item) { return item.under === name; });
+    },
+    gwChildrenChanged(name) {
+      return this.gwChildren(name).filter(function(item) { return item.saved; }).length;
+    },
+    gwWithChildren(items) {
+      const self = this;
+      return items.reduce(function(all, item) { return all.concat([item], self.gwChildren(item.name)); }, []);
+    },
+    settingVisible(item) {
+      return !item.under || !!this.gwQuery.trim() || this.gwIsOpen('sub:' + item.under);
+    },
     gwCommon() {
       const items = this.gwItems().filter(function(item) { return item.common; });
-      return items.filter(function(item) { return item.kind === 'switch'; })
-        .concat(items.filter(function(item) { return item.kind !== 'switch'; }));
+      return this.gwWithChildren(items.filter(function(item) { return item.kind === 'switch'; })
+        .concat(items.filter(function(item) { return item.kind !== 'switch'; })));
     },
     // 网关和运行地区画在「模型与上游」里上游地址下面。
     gwUpstreamSettings() {
@@ -70,12 +84,14 @@ export const ADMIN_SCRIPT_SETTINGS = String.raw`    async init() {
     },
     // 没在搜时「常用」和上游那几项不在分组里重复；搜的时候所有项都参与（中英文名、说明、变量名都能搜），命中的组自动展开。
     gwSections() {
+      const self = this;
       const q = this.gwQuery.trim().toLowerCase();
       return this.gwGroups.map(function(g) {
-        const items = g.items.filter(function(item) {
-          if (!q) return !item.common && !item.upstream;
+        const matched = g.items.filter(function(item) {
+          if (!q) return !item.common && !item.upstream && !item.under;
           return [item.label, item.hint, item.labelEn, item.hintEn, item.name, g.group, g.groupEn].some(function(text) { return String(text || '').toLowerCase().includes(q); });
         });
+        const items = q ? matched : self.gwWithChildren(matched);
         return { group: g.group, groupEn: g.groupEn || '', items: items, changed: items.filter(function(item) { return item.saved; }).length };
       }).filter(function(section) { return section.items.length; });
     },

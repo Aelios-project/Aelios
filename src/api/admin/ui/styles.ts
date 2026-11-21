@@ -242,6 +242,8 @@ export const ADMIN_STYLES = `<style>
   /* 设置 */
   .set-row { display: flex; align-items: flex-start; gap: 16px; padding: 14px 0; border-top: 1px solid var(--div); }
   .set-row:first-child { border-top: 0; }
+  .set-sub { margin-left: 14px; padding-left: 12px; border-left: 2px solid var(--div); }
+  .fold-btn { display: inline-flex; align-items: center; gap: 2px; border: 0; background: var(--soft); color: var(--t2); border-radius: 999px; padding: 1px 6px 1px 9px; font-size: 12px; }
   .set-label { font-size: 14px; font-weight: 500; color: var(--t1); }
   .set-hint { margin-top: 6px; padding: 8px 12px; border-radius: 8px; background: var(--soft); font-size: 13px; color: var(--t2); line-height: 1.7; }
   .set-hint code { display: inline-block; margin-left: 8px; color: var(--t3); font-size: 12px; }

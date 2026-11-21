@@ -9,6 +9,8 @@ export interface SettingSpec {
   name: string; label: string; hint?: string; group: string;
   labelEn?: string; hintEn?: string;
   kind?: "switch"; defaultOn?: boolean; common?: boolean; upstream?: boolean;
+  /** The switch this setting belongs to; the settings page folds it under that switch. */
+  under?: string;
 }
 /** The Worker's placement hint: a cloud region the way Cloudflare names it, provider:region. */
 export const PLACEMENT_REGION_RE = /^(aws|gcp|azure):[a-z0-9-]{2,40}$/i;
@@ -68,51 +70,56 @@ export const SETTINGS: SettingSpec[] = [
     name: "ROLLING_DREAM",
     label: "白天整理",
     labelEn: "Daytime Dream",
-    hint: "默认关。打开后，白天每攒够一段对话（默认 10 条或 8000 字），先用 Clef-flash 判断里面有没有值得记的，有就用 Dream 模型写成待审候选或明确决定；夜里只处理白天没整理到的消息，日记照常读全天。会调用模型：Dream 模型填的是 chatgpt/... 时，白天和夜里共用套餐额度",
-    hintEn: "Off by default. When on, each stretch of conversation (10 messages or 8,000 characters by default) is checked with Clef-flash during the day, and stretches worth keeping are written by the Dream model as review candidates or explicit decisions. Nightly Dream only handles what the day left, and the journal still reads the whole day. This calls models: with a chatgpt/... Dream model, daytime and nightly calls share the plan allowance.",
+    hint: "默认开。白天每攒够一段对话（默认 10 条或 8000 字），先用 Clef-flash 判断里面有没有值得记的，有就用 Dream 模型写成待审候选或明确决定；夜里只处理白天没整理到的消息，日记照常读全天。关掉就只在夜里整理。会调用模型：Dream 模型填的是 chatgpt/... 时，白天和夜里共用套餐额度；免费档的 Workers AI 每天只有 1 万 neurons，白天用掉后夜里可能跑不完",
+    hintEn: "On by default. Each stretch of conversation (10 messages or 8,000 characters by default) is checked with Clef-flash during the day, and stretches worth keeping are written by the Dream model as review candidates or explicit decisions. Nightly Dream only handles what the day left, and the journal still reads the whole day. Off: everything waits for the nightly run. This calls models: with a chatgpt/... Dream model, daytime and nightly calls share the plan allowance; on the Workers Free plan, Workers AI has 10,000 neurons a day, and daytime use can leave the nightly run short.",
     kind: "switch",
-    defaultOn: false,
+    defaultOn: true,
     common: true
   },
   {
     group: "Dream 与日记",
     name: "ROLLING_WINDOW_MESSAGES",
-    label: "滚动窗口消息条数",
-    labelEn: "Messages per rolling window",
-    hint: "默认 10。未处理消息达到条数或字符上限时触发一个滚动窗口。",
-    hintEn: "Default 10. Triggers a rolling window when unprocessed messages reach this count or the character limit."
+    under: "ROLLING_DREAM",
+    label: "每段多少条对话",
+    labelEn: "Messages per stretch",
+    hint: "默认 10，最多 100。没整理的对话攒够这么多条，或者字数到了下面的上限，就整理一段",
+    hintEn: "Default 10, at most 100. A stretch is processed once this many unprocessed messages pile up, or once they reach the character limit below."
   },
   {
     group: "Dream 与日记",
     name: "ROLLING_WINDOW_CHARS",
-    label: "滚动窗口字符上限",
-    labelEn: "Rolling window character limit",
-    hint: "默认 8000。单条超过上限的消息单独成窗并按码点切片。",
-    hintEn: "Default 8000. A single oversized message forms its own window and is split by code points."
+    under: "ROLLING_DREAM",
+    label: "每段字数上限",
+    labelEn: "Characters per stretch",
+    hint: "默认 8000。单条超过上限的消息自己成一段，按字切开分几次读",
+    hintEn: "Default 8,000. A single message longer than this forms its own stretch and is read in pieces."
   },
   {
     group: "Dream 与日记",
     name: "ROLLING_STATE_CHARS",
-    label: "滚动状态字符上限",
-    labelEn: "Rolling state character limit",
-    hint: "默认 1200。超出时先裁导航细节，保留仍有效的决定变更。",
-    hintEn: "Default 1200. Trims navigation details first while keeping active decision changes."
+    under: "ROLLING_DREAM",
+    label: "段与段之间的备忘上限",
+    labelEn: "Notes carried between stretches",
+    hint: "默认 1200 字。记着正在聊的话题和最近的决定，带给下一段；超了先删话题细节，保留仍有效的决定",
+    hintEn: "Default 1,200 characters. Keeps the topics in progress and recent decisions for the next stretch; when over, topic details go first and still-valid decisions stay."
   },
   {
     group: "Dream 与日记",
     name: "ROLLING_CLAIM_TTL_MINUTES",
-    label: "滚动窗口认领超时（分钟）",
-    labelEn: "Rolling window claim TTL (minutes)",
-    hint: "默认 15。认领超过此时长仍未完成视为中断，允许重领或由夜间接手。",
-    hintEn: "Default 15. Unfinished claims older than this can be re-claimed or picked up by nightly Dream."
+    under: "ROLLING_DREAM",
+    label: "一段处理多久算卡住（分钟）",
+    labelEn: "Minutes before a stretch counts as stuck",
+    hint: "默认 15。超过这个时间还没处理完，就当作中断，可以重新处理，或者交给夜里接手",
+    hintEn: "Default 15. A stretch still unfinished after this long counts as interrupted and can be retried or picked up by the nightly run."
   },
   {
     group: "Dream 与日记",
     name: "ROLLING_MAX_ATTEMPTS",
-    label: "滚动窗口最大重试次数",
-    labelEn: "Max attempts per rolling window",
-    hint: "默认 3。达到上限后记录失败原因并放行后续窗口，原话照常可搜。",
-    hintEn: "Default 3. After exhausting attempts, logs the failure and unblocks later windows while keeping raw search intact."
+    under: "ROLLING_DREAM",
+    label: "一段最多重试几次",
+    labelEn: "Retries per stretch",
+    hint: "默认 3，最多 10。还失败就记下原因、跳过这段，后面的照常整理，原话照样能搜到",
+    hintEn: "Default 3, at most 10. After that the failure is logged and the stretch is skipped so later ones continue; the original words stay searchable."
   },
   { group: "Dream 与日记", name: "DREAM_MAX_MESSAGES", label: "一轮读多少条对话", labelEn: "Messages read per round" },
   { group: "Dream 与日记", name: "DREAM_MEMORY_CONTEXT_LIMIT", label: "一轮参考多少条已有记忆", labelEn: "Existing memories consulted per round" },
@@ -215,6 +222,7 @@ export function describeSettings(env: Env, settings: Record<string, string>) {
       labelEn: spec.labelEn || "", hintEn: spec.hintEn || "",
       ...(spec.kind === "switch" ? { kind: spec.kind, defaultOn: spec.defaultOn === true } : {}),
       ...(spec.common ? { common: true } : {}),
+      ...(spec.under ? { under: spec.under } : {}),
       ...(spec.upstream ? { upstream: true } : {}),
       value: settings[spec.name] || "",
       deployed: typeof deployed === "string" ? deployed : ""

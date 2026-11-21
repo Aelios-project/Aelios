@@ -57,7 +57,7 @@ test("0028 captures new turns, leaves old rows alone, and never reuses a deleted
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM messages").get()?.n, 3);
 });
 
-test("0029 drops the shadow mode: its columns, draft events, navigation state and saved setting", (t) => {
+test("0029 drops the shadow mode and turns a saved shadow into off, not into daytime writes", (t) => {
   const sqlite = new DatabaseSync(":memory:");
   t.after(() => sqlite.close());
   const files = readdirSync("migrations").filter(name => name.endsWith(".sql")).sort();
@@ -74,15 +74,18 @@ test("0029 drops the shadow mode: its columns, draft events, navigation state an
   assert.deepEqual(sqlite.prepare("SELECT id FROM memory_events").all().map(row => row.id), ["evt_w"]);
   assert.deepEqual(sqlite.prepare("SELECT name FROM processing_cursors").all().map(row => row.name), ["rolling_state:default"]);
   const saved = JSON.parse(String(sqlite.prepare("SELECT config_json FROM gateway_config").get()?.config_json));
-  assert.deepEqual(saved.settings, { DREAM_TIME_ZONE: "UTC" });
+  assert.deepEqual(saved.settings, { ROLLING_DREAM: "false", DREAM_TIME_ZONE: "UTC" });
 });
 
-test("daytime Dream is one switch; an older saved shadow value reads as off", () => {
-  for (const on of ["on", "true", "1", "yes", " ON "]) assert.equal(isDaytimeDreamOn({ ROLLING_DREAM: on }), true, on);
-  for (const off of ["off", "false", "0", "shadow", "", undefined]) assert.equal(isDaytimeDreamOn({ ROLLING_DREAM: off }), false, String(off));
+test("daytime Dream is one switch, on unless switched off, with its tuning folded under it", () => {
+  for (const on of ["on", "true", "1", "yes", " ON ", "", undefined]) assert.equal(isDaytimeDreamOn({ ROLLING_DREAM: on }), true, String(on));
+  for (const off of ["off", "false", "0", "no", " Off "]) assert.equal(isDaytimeDreamOn({ ROLLING_DREAM: off }), false, off);
   const spec = SETTINGS.find(setting => setting.name === "ROLLING_DREAM");
   assert.equal(spec?.kind, "switch");
-  assert.equal(spec?.defaultOn, false);
+  assert.equal(spec?.defaultOn, true);
+  assert.deepEqual(SETTINGS.filter(setting => setting.under === "ROLLING_DREAM").map(setting => setting.name), [
+    "ROLLING_WINDOW_MESSAGES", "ROLLING_WINDOW_CHARS", "ROLLING_STATE_CHARS", "ROLLING_CLAIM_TTL_MINUTES", "ROLLING_MAX_ATTEMPTS"
+  ]);
 });
 
 test("window thresholds respect message and code point budgets, including an oversized head", () => {
@@ -297,7 +300,6 @@ test("A1 nightly owns captures made while daytime Dream is off, and force may re
     return { response: { memories: [] } };
   } } as Env["AI"];
   assert.equal((await runRollingWindow(env, "default")).reason, "off");
-  assert.equal((await runRollingWindow({ ...env, ROLLING_DREAM: "shadow" }, "default", { triage: ordinary })).reason, "off");
   assert.equal((await runDailyMemoryDigest(env, "default", { dateLabel: SYNTHETIC_DAY })).ran, true);
   assert.match(extracts[0], /First real line/);
   assert.match(extracts[0], /Line before migration/);

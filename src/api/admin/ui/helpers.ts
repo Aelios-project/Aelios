@@ -52,7 +52,7 @@ export const navLink = (id: string, icon: string, zh: string, en: string, extra 
   `<button type="button" @click="go('${id}')" class="nav-link" :class="page === '${id}' ? 'is-active' : ''" :aria-current="page === '${id}' ? 'page' : null">${icon}<span class="flex-1 text-left">${t(zh, en)}</span>${extra}</button>`;
 
 // 设置页每一项：名字一行，说明收在 ⓘ 里点开才看；开关点了就存，文字改完离开输入框就存。
-export const SETTING_ROW = `<div class="set-row" :title="item.name">
+export const SETTING_ROW = `<div class="set-row" :class="item.under ? 'set-sub' : ''" x-show="settingVisible(item)" :title="item.name">
                 <div class="min-w-0 flex-1">
                   <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span x-show="item.saved" class="dot-changed" aria-hidden="true"></span>
@@ -60,6 +60,7 @@ export const SETTING_ROW = `<div class="set-row" :title="item.name">
                     <template x-if="item.kind !== 'switch'"><label class="set-label" :for="'setting-' + item.name" x-text="sLabel(item)"></label></template>
                     <button type="button" x-show="sHint(item)" @click="toggleHint(item.name)" class="info-btn" :aria-expanded="hintOpen(item.name) ? 'true' : 'false'" :aria-label="L('说明：', 'About: ') + sLabel(item)">${I.info}</button>
                     <button type="button" x-show="item.saved" @click="saveSetting(item, '')" :disabled="item.busy" class="reset-btn" x-text="L('已改 · 恢复默认', 'Changed · Reset')"></button>
+                    <button type="button" x-show="gwChildren(item.name).length && !gwQuery.trim()" @click="gwToggle('sub:' + item.name)" class="fold-btn" :aria-expanded="gwIsOpen('sub:' + item.name) ? 'true' : 'false'"><span x-text="gwIsOpen('sub:' + item.name) ? L('收起细项', 'Hide details') : L('细项', 'Details') + (gwChildrenChanged(item.name) ? L(' · 改过 ' + gwChildrenChanged(item.name) + ' 项', ' · ' + gwChildrenChanged(item.name) + ' changed') : '')"></span><span class="chev" :class="gwIsOpen('sub:' + item.name) ? 'is-open' : ''">${I.chevron}</span></button>
                   </div>
                   <div x-show="hintOpen(item.name)" class="set-hint">
                     <span x-text="sHint(item)"></span><code x-text="item.name"></code>

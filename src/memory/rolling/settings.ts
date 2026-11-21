@@ -15,10 +15,10 @@ function bounded(value: string | undefined, fallback: number, maximum: number): 
     : fallback;
 }
 
-/** Daytime Dream: windows are triaged and written during the day; nightly Dream fills the gaps. */
+/** Daytime Dream, on unless switched off: windows are triaged and written during the day; nightly fills the gaps. */
 export function isDaytimeDreamOn(env: Pick<Env, "ROLLING_DREAM">): boolean {
-  // "shadow" was a read-only comparison mode in earlier releases; it now reads as off.
-  return ["on", "true", "1", "yes"].includes((env.ROLLING_DREAM ?? "").trim().toLowerCase());
+  // Same reading as the settings page switch. Unknown values, including the retired "shadow", fall back to the default.
+  return !["off", "false", "0", "no"].includes((env.ROLLING_DREAM ?? "").trim().toLowerCase());
 }
 
 export function rollingSettings(env: Env): RollingSettings {
