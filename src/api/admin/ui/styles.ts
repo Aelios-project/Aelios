@@ -247,6 +247,7 @@ export const ADMIN_STYLES = `<style>
   .set-label { font-size: 14px; font-weight: 500; color: var(--t1); }
   .set-hint { margin-top: 6px; padding: 8px 12px; border-radius: 8px; background: var(--soft); font-size: 13px; color: var(--t2); line-height: 1.7; }
   .set-hint code { display: inline-block; margin-left: 8px; color: var(--t3); font-size: 12px; }
+  .set-default { margin-top: 4px; font-size: 13px; color: var(--t2); overflow-wrap: anywhere; }
   .set-input { width: 240px; max-width: 46%; flex: none; }
   .info-btn { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 999px; border: 0; background: transparent; color: var(--t3); }
   .info-btn:hover { color: var(--vt); background: var(--soft); }

@@ -1,6 +1,8 @@
 import type { Env } from "../types";
 import { isWorkersAiModel } from "../proxy/openaiAdapter";
 import { readPositiveInt, readString } from "./dreamUtils";
+import { DEFAULT_DREAM_MODEL, readDreamMaxTokens, WORKERS_AI_OUTPUT_LIMIT } from "./dreamDefaults";
+export { DEFAULT_DREAM_MODEL, readDreamMaxTokens } from "./dreamDefaults";
 
 const DEFAULT_MAX_MESSAGES = 40;
 const DEFAULT_MEMORY_CONTEXT_LIMIT = 40;
@@ -27,11 +29,6 @@ export function readFirstEnvValue(...values: unknown[]): unknown {
   return undefined;
 }
 
-/** Default for nightly and daytime Dream, the journal, the weekly and monthly summaries and chat imports. */
-export const DEFAULT_DREAM_MODEL = "workers-ai/@cf/zai-org/glm-4.7-flash";
-const WORKERS_AI_OUTPUT_LIMIT = 8000;
-const MAX_OUTPUT_LIMIT = 65_536;
-
 export function readDreamModel(env: Env): string | null {
   return (
     readString(readFirstEnvValue(env.DREAM_MODEL, env.DAILY_DIGEST_MODEL, env.SUMMARY_MODEL)) ||
@@ -49,12 +46,6 @@ export function readDreamMaxMessages(env: Env): number {
     DEFAULT_MAX_MESSAGES,
     1000
   );
-}
-
-/** The output limit set in Settings, or undefined when none is set. */
-export function readDreamMaxTokens(env: Env): number | undefined {
-  const raw = readFirstEnvValue(env.DREAM_MAX_TOKENS, env.DAILY_DIGEST_MAX_TOKENS);
-  return readString(raw) ? readPositiveInt(raw, WORKERS_AI_OUTPUT_LIMIT, MAX_OUTPUT_LIMIT) : undefined;
 }
 
 /**
