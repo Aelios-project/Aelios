@@ -54,7 +54,7 @@ export function closureStatements(db: D1Database, namespace: string, root: strin
       .prepare(`DELETE FROM memory_events WHERE namespace=?1 AND event_type='dream_review_proposal' AND EXISTS
       (SELECT 1 FROM json_each(payload_json,'$.message_ids') i JOIN memory_revocations r ON r.namespace=?1 AND r.applying=1 AND r.ref='message:' || i.value)`)
       .bind(namespace),
-    db.prepare(`DELETE FROM processing_cursors WHERE name IN ('rolling_state:' || ?1,'rolling_shadow_state:' || ?1)`)
+    db.prepare(`DELETE FROM processing_cursors WHERE name='rolling_state:' || ?1`)
       .bind(namespace),
     db
       .prepare(`DELETE FROM perception_cache WHERE namespace=?1 AND EXISTS (SELECT 1 FROM json_each(items) item

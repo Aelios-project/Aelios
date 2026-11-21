@@ -52,7 +52,7 @@ export const navLink = (id: string, icon: string, zh: string, en: string, extra 
   `<button type="button" @click="go('${id}')" class="nav-link" :class="page === '${id}' ? 'is-active' : ''" :aria-current="page === '${id}' ? 'page' : null">${icon}<span class="flex-1 text-left">${t(zh, en)}</span>${extra}</button>`;
 
 // 设置页每一项：名字一行，说明收在 ⓘ 里点开才看；开关点了就存，文字改完离开输入框就存。
-export const SETTING_ROW = `<div class="set-row" :title="item.name">
+export const SETTING_ROW = `<div class="set-row" :class="item.under ? 'set-sub' : ''" x-show="settingVisible(item)" :title="item.name">
                 <div class="min-w-0 flex-1">
                   <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span x-show="item.saved" class="dot-changed" aria-hidden="true"></span>
@@ -60,27 +60,16 @@ export const SETTING_ROW = `<div class="set-row" :title="item.name">
                     <template x-if="item.kind !== 'switch'"><label class="set-label" :for="'setting-' + item.name" x-text="sLabel(item)"></label></template>
                     <button type="button" x-show="sHint(item)" @click="toggleHint(item.name)" class="info-btn" :aria-expanded="hintOpen(item.name) ? 'true' : 'false'" :aria-label="L('说明：', 'About: ') + sLabel(item)">${I.info}</button>
                     <button type="button" x-show="item.saved" @click="saveSetting(item, '')" :disabled="item.busy" class="reset-btn" x-text="L('已改 · 恢复默认', 'Changed · Reset')"></button>
+                    <button type="button" x-show="gwChildren(item.name).length && !gwQuery.trim()" @click="gwToggle('sub:' + item.name)" class="fold-btn" :aria-expanded="gwIsOpen('sub:' + item.name) ? 'true' : 'false'"><span x-text="gwIsOpen('sub:' + item.name) ? L('收起细项', 'Hide details') : L('细项', 'Details') + (gwChildrenChanged(item.name) ? L(' · 改过 ' + gwChildrenChanged(item.name) + ' 项', ' · ' + gwChildrenChanged(item.name) + ' changed') : '')"></span><span class="chev" :class="gwIsOpen('sub:' + item.name) ? 'is-open' : ''">${I.chevron}</span></button>
                   </div>
                   <div x-show="hintOpen(item.name)" class="set-hint">
                     <span x-text="sHint(item)"></span><code x-text="item.name"></code>
-                    <template x-if="item.kind === 'select'">
-                      <div><template x-for="option in item.options" :key="option.value">
-                        <p x-text="L(option.label, option.labelEn) + ' · ' + L(option.hint || '', option.hintEn || '')"></p>
-                      </template></div>
-                    </template>
                   </div>
                 </div>
                 <template x-if="item.kind === 'switch'">
                   <button type="button" role="switch" :aria-checked="settingOn(item) ? 'true' : 'false'" :aria-labelledby="'lb-' + item.name" :disabled="item.busy" @click="toggleSetting(item)" class="switch" :class="settingOn(item) ? 'is-on' : ''"><span></span></button>
                 </template>
-                <template x-if="item.kind === 'select'">
-                  <select :id="'setting-' + item.name" x-effect="const v = settingOption(item); $nextTick(() => { $el.value = v; })" @change="saveSetting(item, $event.target.value)" :disabled="item.busy" class="field set-input">
-                    <template x-for="option in item.options" :key="option.value">
-                      <option :value="option.value" :disabled="option.disabled" :selected="option.value === settingOption(item)" x-text="L(option.label, option.labelEn)"></option>
-                    </template>
-                  </select>
-                </template>
-                <template x-if="item.kind !== 'switch' && item.kind !== 'select'">
+                <template x-if="item.kind !== 'switch'">
                   <input :id="'setting-' + item.name" x-model="item.value" @change="saveSetting(item, item.value)" @keydown.enter.prevent="$event.target.blur()" @keydown.escape="item.value = item.saved; $event.target.blur()" :disabled="item.busy" :placeholder="item.deployed ? L('留空用 ', 'Blank uses ') + item.deployed : L('留空用默认值', 'Blank uses the default')" class="field set-input">
                 </template>
               </div>`;

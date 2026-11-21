@@ -1,8 +1,5 @@
 import type { Env } from "../../types";
 
-export type RollingMode = "off" | "shadow" | "on";
-export type RollingLane = Exclude<RollingMode, "off">;
-
 export interface RollingSettings {
   messages: number;
   chars: number;
@@ -18,15 +15,10 @@ function bounded(value: string | undefined, fallback: number, maximum: number): 
     : fallback;
 }
 
-export function rollingMode(env: Env): RollingMode {
-  return env.ROLLING_DREAM === "shadow" || env.ROLLING_DREAM === "on"
-    ? env.ROLLING_DREAM
-    : "off";
-}
-
-export function activeRollingLane(env: Env): RollingLane | null {
-  const mode = rollingMode(env);
-  return mode === "off" ? null : mode;
+/** Daytime Dream, on unless switched off: windows are triaged and written during the day; nightly fills the gaps. */
+export function isDaytimeDreamOn(env: Pick<Env, "ROLLING_DREAM">): boolean {
+  // Same reading as the settings page switch. Unknown values, including the retired "shadow", fall back to the default.
+  return !["off", "false", "0", "no"].includes((env.ROLLING_DREAM ?? "").trim().toLowerCase());
 }
 
 export function rollingSettings(env: Env): RollingSettings {

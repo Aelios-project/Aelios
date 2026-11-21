@@ -73,7 +73,7 @@ async function applyEvent(env: Env, claim: RollingClaim, draft: RollingDraft, ev
 export async function commitRollingDrafts(env: Env, claim: RollingClaim): Promise<boolean> {
   const { namespace, key, rows } = claim;
   const retained = new Set(rows.map(row => row.id));
-  const snapshot = await loadRollingState(env, namespace, "on");
+  const snapshot = await loadRollingState(env, namespace);
   let state = snapshot.state;
   const drafts = await loadRollingDrafts(env.DB, claim);
   for (const draft of drafts) {

@@ -29,7 +29,8 @@ function proposed(packet) {
 
 function baselineReply(request, sqlite, counts) {
   const [system, user] = request.messages;
-  if (system.content.includes("不要输出思考过程")) {
+  // The digest call asks for "no reasoning"; the extraction call does not.
+  if (system.content.includes("no reasoning")) {
     counts.digest += 1;
     return { response: { title: "Check-in", summary: "We scheduled the synthetic check-ins." } };
   }
@@ -52,7 +53,7 @@ async function sample(mode, latency) {
     if (mode === "nightly") sqlite.exec("DROP TRIGGER rolling_inbox_capture");
     const counts = { digest: 0, clef: 0, extractor: 0, gated: 0, timeouts: 0 };
     const env = {
-      DB: db, ROLLING_DREAM: mode === "nightly" ? "off" : mode === "triage" ? "shadow" : mode,
+      DB: db, ROLLING_DREAM: mode === "nightly" ? "off" : "on",
       DREAM_TIME_ZONE: "UTC", DREAM_STRATEGY: "review", CURRENT_STATE_PROJECTION: "on",
       AI: { async run(_model, request) {
         if (!request.messages) return { data: [[1, 0]] };
@@ -117,27 +118,22 @@ async function sample(mode, latency) {
     const processingMs = performance.now() - start;
     const landed = () => sqlite.prepare(`SELECT content,source_message_ids FROM memory_candidates
       UNION ALL SELECT content,source_message_ids FROM memories WHERE source='scoped_decision' AND status IN ('active','superseded')`).all();
-    const writes = mode === "nightly" || mode === "on";
-    const events = writes
-      ? landed().map(row => ({
-        content: row.content, source_message_ids: JSON.parse(row.source_message_ids)
-      }))
-      : sqlite.prepare("SELECT payload_json FROM memory_events WHERE event_type='rolling_shadow'").all()
-        .flatMap(row => JSON.parse(row.payload_json).events.filter(event => event.op !== "no_op"));
+    const events = landed().map(row => ({
+      content: row.content, source_message_ids: JSON.parse(row.source_message_ids)
+    }));
     const ids = events.flatMap(event => event.source_message_ids);
     const wrongEvidence = ids.filter(id => !expectedIds.has(id)).length;
     const duplicateCandidates = events.length - new Set(events.map(event => event.content)).size;
     await invalidateKnownInputs(env, { namespace: "default", id: "chat_1" }, "message");
     const stored = sqlite.prepare("SELECT content,status FROM memories WHERE id='personal'").get();
     const active = sqlite.prepare("SELECT content FROM memories WHERE source='scoped_decision' AND status='active'").get();
-    const latestShadow = events.filter(event => event.decision).at(-1);
     return {
       mode, messages: times.length, captureWriteMs: latency(times), enqueueMs, processingMs, ...counts,
       windows, completedRetries, failedWindows: (await getRollingDreamStatus(env, "default")).failed_windows.length,
       events: events.length, duplicateCandidates, citedIds: ids.length, wrongEvidence,
       crossNamespaceEvidence: ids.filter(id => id === "other").length,
-      latestDecisionCorrect: mode === "triage" ? null : writes ? active?.content === decisionContent("Sunday") : latestShadow?.decision?.value === "Sunday",
-      unrelatedLiveWritesWithdrawn: writes ? events.length - landed().length : 0,
+      latestDecisionCorrect: mode === "triage" ? null : active?.content === decisionContent("Sunday"),
+      unrelatedLiveWritesWithdrawn: events.length - landed().length,
       authoredRetained: stored?.content === authored && stored.status === "active"
     };
   } finally {
@@ -147,6 +143,7 @@ async function sample(mode, latency) {
 
 export async function runRollingBenchmark(latency) {
   const cases = [];
-  for (const mode of ["nightly", "triage", "shadow", "on"]) cases.push(await sample(mode, latency));
+  // triage: daytime Dream with Clef deciding and the writer returning nothing, to count triage alone.
+  for (const mode of ["nightly", "triage", "on"]) cases.push(await sample(mode, latency));
   console.log(JSON.stringify({ rolling: { fixture: "local SQLite and synthetic adapters", chatPathAddedModelCalls: 0, cases } }));
 }
