@@ -1,161 +1,121 @@
-# Secrets & 配置变量：怎么正确部署 Aelios 的密钥
+# Secrets 与环境变量部署说明
 
-这篇文档写给两拨人：
+本文说明如何区分 Cloudflare Worker 的 Secret 与 Variable、新部署时的密钥配置步骤，以及早期 fork 在 PR #9 之前部署过的密钥轮换与历史清理流程。
 
-- **正在第一次部署的姐妹**：照「新部署」那段做，5 分钟。
-- **已经 fork 并部署过、但用了老 setup 的姐妹**：照「老 fork 迁移」那段做，先检查 wrangler.toml 有没有被写入密钥，再决定要不要 rotate。
+## 1. Secret 与 Variable 分类
 
----
+在 Cloudflare Worker 的 **Settings → Variables and Secrets** 中，**Variable** 以明文保存，可能会被写入受 git 跟踪的 `wrangler.toml`。**Secret** 仅加密保存在 Cloudflare 服务端，永不写入仓库文件。
 
-## 1. 一秒钟看懂：哪些是 Secret，哪些是 Variable
+| 名称 | 类型 | 必填 | 用途 |
+| --- | --- | --- | --- |
+| `CHATBOX_API_KEY` | **Secret** | 必填 | 主访问密钥，用于客户端、管理面板 `/admin`、网关配置与 MCP |
+| `CLOUDFLARE_API_TOKEN` | **Secret** | 可选 | Cloudflare 令牌，用于聊天网关转发（AI Gateway BYOK 与 AI REST API）、模型目录、Workers AI 转发及 Vectorize 维护工具 |
+| `MEMORY_MCP_API_KEY` | **Secret** | 可选 | 独立的 MCP 与记忆接口密钥，不能修改网关设置 |
+| `IM_API_KEY` | **Secret** | 可选 | 第二把客户端访问密钥，适合给 IM bot 或独立客户端使用 |
+| `DEBUG_API_KEY` | **Secret** | 可选 | 维护与跨空间操作密钥 |
+| `GUIDE_DOG_API_KEY` | **Secret** | 可选 | `/v1/guide-dog` 看图端点访问密钥 |
+| `CF_AIG_TOKEN` | **Secret** | 可选 | AI Gateway 认证令牌，仅在无 `AI` 绑定且通过 `AI_GATEWAY_BASE_URL` 访问开启了 Authenticated Gateway 的网关时需要 |
+| `GITHUB_DAILY_TOKEN` | **Secret** | 可选 | GitHub 日档拉取的只读 fine-grained PAT（仅需目标仓库 Contents 只读权限） |
+| `CLOUDFLARE_ACCOUNT_ID` | Variable | 自动填充 | 执行 `npm run deploy` 时由 `scripts/setup-cloudflare.mjs` 从部署环境自动识别写入 `[vars]`，多账号环境下可手动补充 |
+| `AI_GATEWAY_BASE_URL` | Variable | 可选 | 自定义或完整 AI Gateway 地址，可在 `/admin` 上游设置中配置 |
+| 其他运行参数 | Variable | 可选 | 如 `DREAM_MODEL`、`DREAM_TIME_ZONE`、`MESSAGES_RETENTION_DAYS` 等，推荐在 `/admin` 设置中覆盖 |
 
-Cloudflare Worker 的「Variables and Secrets」面板里，**Variable** 是明文、会被写进 `wrangler.toml`、git tracked；**Secret** 是加密、只在 Cloudflare 端存、永远不进 git。
+判断原则很简单，凡是名称包含 `KEY` 或 `TOKEN` 的全部配为 **Secret**，其余非敏感参数配为 **Variable** 或在 `/admin` 面板中配置。
 
-| 名字 | 类型 | 用来干嘛 |
-|---|---|---|
-| `CHATBOX_API_KEY` | **Secret** | 客户端和管理面板的访问密钥 |
-| `MEMORY_MCP_API_KEY` | **Secret** | 纯记忆库 MCP 的访问密钥（可选） |
-| `GUIDE_DOG_API_KEY` | **Secret** | 导盲犬 API 的访问密钥（可选） |
-| `IM_API_KEY` | **Secret** | 第二把钥匙，IM bot 用（可选） |
-| `DEBUG_API_KEY` | **Secret** | 调试接口钥匙（可选） |
-| `CF_AIG_TOKEN` | **Secret** | AI Gateway 调用 token（接网关才需要） |
-| `CLOUDFLARE_API_TOKEN` | **Secret** | 可选。仅维护工具（Vectorize 对账/清理）与网关模式的 Workers AI 转发需要；建库建索引由部署环境的 wrangler 凭证完成，不靠它 |
-| `CLOUDFLARE_ACCOUNT_ID` | Variable | 不用手填：部署时 setup 脚本从部署环境自动取了写进 [vars]，多账号等取不到的场景才需要手动补 |
-| `AI_GATEWAY_BASE_URL` | Variable | AI Gateway 地址，不是密钥，可明文 |
-| 其它带默认值的环境变量 | Variable | 可明文 |
+## 2. 新部署配置流程
 
-**口诀**：名字里有 `KEY` / `TOKEN` 的，走 Secret；其它走 Variable。
+1. Fork `Aelios-project/Aelios` 并在 Cloudflare Workers & Pages 中关联自己的 Fork（或本地克隆部署）。
+2. 打开 Worker 的 **Settings → Variables and Secrets**，点击 **Add**，类型选择 **Secret**。
+   - 添加 `CHATBOX_API_KEY`，填入自编的高强度随机密钥（例如 `openssl rand -base64 32` 生成的值）。
+   - 需要完整聊天转发时添加 `CLOUDFLARE_API_TOKEN`（建议包含 `AI Gateway Run`、`AI Gateway Read` 与 `Workers AI Read` 权限，另可按需加上 `Vectorize Read`）。
+   - 按实际需要添加 `MEMORY_MCP_API_KEY`、`IM_API_KEY`、`DEBUG_API_KEY`、`GUIDE_DOG_API_KEY`、`CF_AIG_TOKEN` 或 `GITHUB_DAILY_TOKEN`。
+3. 使用以下命令完成构建、建库、建索引、迁移与部署。
 
----
+```bash
+npm ci
+npm run deploy
+```
 
-## 2. 新部署：正确流程
+`scripts/setup-cloudflare.mjs` 仅同步非敏感变量与资源绑定，不会把任何密钥写进 `wrangler.toml`。本地部署后运行 `git checkout -- wrangler.toml` 还原临时写入的绑定信息，避免提交环境配置。
 
-1. Fork `Aelios-project/Aelios`，clone 到本地。
-2. 在 Cloudflare Dashboard 创建 Worker（或先空着，`deploy:cloudflare` 会自动建）。
-3. **Worker → Settings → Variables and Secrets**，点 `Add`：
-   - 类型选 **Secret**（红框警告：不要选成 Variable！），加入你需要的密钥：
-     - `CHATBOX_API_KEY` —— 自己编一个密码，如 `sk-my-aelios-key`（唯一必填）
-     - 其它 `*_API_KEY` / `CF_AIG_TOKEN` / `CLOUDFLARE_API_TOKEN` 按你选的用法加（都是可选功能）
-   - 用到维护工具时，类型选 Variable 加上 `CLOUDFLARE_ACCOUNT_ID`（这个不是密钥）。
-4. 回到本地仓库跑：
-   ```bash
-   npm install
-   npm run deploy
-   ```
-   setup 脚本会读 Dashboard 上的变量、建好 D1 / Vectorize / Queue，但**不会再把你的密钥写进 wrangler.toml**（这是 #9 修好以后的版本）。
-5. 部署完拿到 Worker 地址，去客户端填 base_url 和 API Key 就行。
+## 3. 早期 Fork 迁移与密钥轮换（PR #9 之前）
 
----
+如果在 PR #9 合并之前（2026 年 6 月底前）曾运行过旧版 `setup-cloudflare.mjs`，明文密钥可能已经进入你的 fork 的 `wrangler.toml` git 历史。请按以下顺序排查并处理。
 
-## 3. 老 fork 迁移：你已经部署过怎么办
-
-如果你的 fork 是在 #9 merge 之前部署的（2026 年 6 月底之前），并跑过 `npm run deploy:cloudflare`，**有可能你的 git 历史里有过含密钥的 `wrangler.toml`**。即使你本地清理了，已经 push 到 GitHub 的 commit 也清不掉——需要按下面顺序走一遍。
-
-### 第 0 步：先升级 Aelios 到修过的版本
+### 第 0 步 同步最新代码
 
 ```bash
 git remote add upstream https://github.com/Aelios-project/Aelios
 git fetch upstream
 git checkout main
-git merge upstream/main       # 或 git rebase upstream/main
-# 如果合并冲突在 wrangler.toml，先把密钥行删掉再解决
+git merge upstream/main
 ```
 
-确认 `scripts/setup-cloudflare.mjs` 里的 `visibleVarNames` 已经不含那 5 个密钥（看不到 `CHATBOX_API_KEY` 等就对了）。
+若合并时 `wrangler.toml` 发生冲突，直接删除其中的密钥行。确认 `scripts/setup-cloudflare.mjs` 中的 `visibleVarNames` 已不包含任何 `*_KEY` 或 `*_TOKEN`。
 
-### 第 1 步：检查 wrangler.toml 历史里有没有密钥
+### 第 1 步 检查 git 历史是否包含真实密钥
 
-在仓库根跑：
+在仓库根目录执行以下命令。
 
 ```bash
-git log -p --all -- wrangler.toml | grep -nE "CHATBOX_API_KEY|MEMORY_MCP_API_KEY|GUIDE_DOG_API_KEY|CF_AIG_TOKEN|CLOUDFLARE_API_TOKEN|IM_API_KEY|DEBUG_API_KEY" | grep "="
+git log -p --all -- wrangler.toml | grep -nE "CHATBOX_API_KEY|MEMORY_MCP_API_KEY|GUIDE_DOG_API_KEY|CF_AIG_TOKEN|CLOUDFLARE_API_TOKEN|IM_API_KEY|DEBUG_API_KEY|GITHUB_DAILY_TOKEN" | grep "="
 ```
 
-- **如果 grep 没有任何匹配**：你的 git 历史是干净的，恭喜，直接跳到第 3 步。
-- **如果出现形如 `CHATBOX_API_KEY = "sk-xxxxx"` 的行（带真实值）**：你的密钥已经进了 git 历史，必须当作已泄漏处理。继续第 2 步。
+- 如果没有任何输出，说明 git 历史未记录密钥，可直接跳至第 3 步。
+- 如果出现带真实密钥值的赋值行，需按泄漏处理并继续第 2 步。
 
-### 第 2 步：如果历史里有真值密钥（可跳到 3）
+### 第 2 步 轮换密钥并清理 git 历史
 
-> 关键：**先撤销/rotate，再清理 git 历史**。顺序反了的话，你刚清完 git 又用着同一个密钥，等于没修。
+先完成轮换，再清理历史。一旦密钥进入过公开仓库，必须视为已经暴露并立刻替换。
 
-1. 去 Cloudflare Dashboard 撤销当前 API Token，生成新的。
-2. 把所有自编的 `CHATBOX_API_KEY` 等也换成新的。
-3. 按「新部署」第 3 步，在 Worker 的 Secrets 里加新的密钥（旧的可以删掉）。
-4. 清理 git 历史里的旧值——有两种选择：
-   - **省心版**：用 BFG Repo-Cleaner。下载 `bfg.jar`，然后：
-     ```bash
-     git clone --mirror <你的 fork>.git fork-mirror.git
-     echo "CHATBOX_API_KEY=" > secrets-to-clean.txt
-     echo "MEMORY_MCP_API_KEY=" >> secrets-to-clean.txt
-     # 列出所有曾经真值出现过的密钥名
-     java -jar bfg.jar --replace-text secrets-to-clean.txt fork-mirror.git
-     cd fork-mirror.git
-     git reflog expire --expire=now --all && git gc --prune=now --aggressive
-     git push
-     ```
-   - **手撸版**：用 `git filter-repo`（推荐用 BFG，filter-repo 对新手更绕）。
-5. 强推到 GitHub：`git push --force`。**force push 会让别人的 fork 和 PR 错位**——但这是清理密钥必须做的，没有第二条路。
-6. 让 GitHub 重新 cache：删掉仓库的 PR cache 不需要做，但如果你担心可以联系 GitHub Support 删除 cached views。
-
-> ⚠️ **重点**：就算 git 历史清完了，只要密钥记到 GitHub 公开仓库里一次，就要当作"全网已经爬过"——**必须 rotate，不要存侥幸**。
-
-### 第 3 步：把当前 wrangler.toml 里的密钥行删掉
-
-不管 git 历史有没有泄漏，**当前工作树里 wrangler.toml 的 `[vars]` 段如果有 `CHATBOX_API_KEY = "..."` 之类的行，都删掉**。这些都是不该有的。
+1. 在 Cloudflare Dashboard 撤销旧的 `CLOUDFLARE_API_TOKEN` / `CF_AIG_TOKEN`，生成新令牌。
+2. 重新生成所有暴露过的自编密钥（如 `CHATBOX_API_KEY`、`MEMORY_MCP_API_KEY` 等）。
+3. 将新密钥全部以 **Secret** 类型写入 Worker 的 Variables and Secrets。
+4. 使用 BFG Repo-Cleaner 或 `git filter-repo` 清除历史中的旧密钥并强制推送。
 
 ```bash
-# 打开 wrangler.toml,在 [vars] 段里把下面这些行删掉(留下其它非密钥变量):
-# CHATBOX_API_KEY = "..."
-# MEMORY_MCP_API_KEY = "..."
-# GUIDE_DOG_API_KEY = "..."
-# IM_API_KEY = "..."
-# DEBUG_API_KEY = "..."
-# CF_AIG_TOKEN = "..."
-# CLOUDFLARE_API_TOKEN = "..."
+git clone --mirror <你的 fork 地址>.git fork-mirror.git
+cat <<'KEYS' > secrets-to-clean.txt
+CHATBOX_API_KEY=
+MEMORY_MCP_API_KEY=
+GUIDE_DOG_API_KEY=
+IM_API_KEY=
+DEBUG_API_KEY=
+CF_AIG_TOKEN=
+CLOUDFLARE_API_TOKEN=
+KEYS
+java -jar bfg.jar --replace-text secrets-to-clean.txt fork-mirror.git
+cd fork-mirror.git
+git reflog expire --expire=now --all && git gc --prune=now --aggressive
+git push --force
 ```
 
-### 第 4 步：把密钥配进 Cloudflare Worker 的 Secrets
+### 第 3 步 清理当前工作树并改用 Secret
+
+检查本地 `wrangler.toml` 的 `[vars]` 段，删除所有 `*_KEY` 与 `*_TOKEN` 行，随后通过命令行或控制台写入 Secret。
 
 ```bash
-# 在仓库根目录逐个跑(会交互式让你粘贴值):
 npx wrangler secret put CHATBOX_API_KEY
-npx wrangler secret put MEMORY_MCP_API_KEY      # 可选
-npx wrangler secret put GUIDE_DOG_API_KEY       # 可选
-npx wrangler secret put CF_AIG_TOKEN            # 接 AI Gateway 才需要
-npx wrangler secret put CLOUDFLARE_API_TOKEN    # 部署脚本要用
+npx wrangler secret put CLOUDFLARE_API_TOKEN
+npx wrangler secret put MEMORY_MCP_API_KEY
+npx wrangler secret put IM_API_KEY
+npx wrangler secret put DEBUG_API_KEY
+npx wrangler secret put GUIDE_DOG_API_KEY
+npx wrangler secret put CF_AIG_TOKEN
+npx wrangler secret put GITHUB_DAILY_TOKEN
 ```
 
-每个会问你 `Enter a secret value:`，粘贴密钥回车就行。这些值**不会**进 wrangler.toml，只在 Cloudflare 端。
-
-### 第 5 步：把清理后的 wrangler.toml commit 掉
+仅配置你需要启用的可选项即可。随后提交清理后的 `wrangler.toml` 并重新部署验证。
 
 ```bash
 git add wrangler.toml
-git commit -m "chore: 把密钥从 wrangler.toml 移到 Cloudflare Secrets"
+git commit -m "chore: remove secrets from wrangler.toml"
 git push
+npm run deploy
 ```
 
-### 第 6 步：重新部署验证
+部署完成后访问 `/health`，确认返回 `"ok": true`。
 
-```bash
-npm run deploy:cloudflare
-```
+## 4. 历史背景
 
-部署后随便发个请求测一下 Worker 还正常（比如 `/health`）。能通就说明：运行时 `env.CHATBOX_API_KEY` 等都正确从 Cloudflare Secrets 拿到了——和之前行为一致，只是源头不再泄漏。
-
----
-
-## 4. 这一切本来怎么发生的（给想了解的姐妹）
-
-`scripts/setup-cloudflare.mjs` 的 `visibleVarNames` 数组里一度混入了 5 个不该混进去的密钥名字。CI 跑 `deploy:cloudflare` 时，setup 脚本会把它们从 `process.env` 读出来写进 git-tracked 的 `wrangler.toml` 的 `[vars]` 段。下次 commit 就把明文密钥 push 上去了。
-
-issue #7 把这事报告出来；PR #9 把这 5 个密钥从 `visibleVarNames` 里删掉，setup 脚本以后再也不碰它们。但**已经部署过的姐妹 git 历史可能依然有密钥**——这份文档就是写给你们的清理指南。
-
----
-
-## 5. 一句话总结
-
-- 名字带 `KEY` / `TOKEN` 的 → Cloudflare **Secret**（不进 git）
-- 名字是 `_URL` / `_ID` / 普通配置的 → Cloudflare **Variable**（进 `[vars]`）
-- 已经泄漏过的 → 先 rotate，再清 git 历史
-- 没 leak 过 → 直接删 wrangler.toml 的密钥行 + `wrangler secret put` 重配就行
+早期 `scripts/setup-cloudflare.mjs` 的 `visibleVarNames` 曾包含若干密钥变量，导致部署时将环境变量写入受 git 跟踪的 `wrangler.toml`。Issue #7 披露该问题后，PR #9 已将这些密钥从 `visibleVarNames` 中移除，脚本不再写入任何凭证。

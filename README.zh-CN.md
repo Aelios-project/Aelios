@@ -1,352 +1,306 @@
-简体中文 | [English](README.md)
-
 # Aelios
 
-给 AI 加一颗长期记忆。换窗口、换客户端、换模型，记忆跟着你走。
+**给 AI 加一颗长期记忆。** 换窗口、换客户端、换模型，记忆始终跟着你走。
 
-它是一个跑在 Cloudflare 上的记忆网关：你的 Chatbox / Claude Code / Codex 先连它，它再把请求转给模型。对话会被记下来，下次自动想起来。
+简体中文 | [English](README.md) · QQ 群 `1091783659`
+
+Aelios 是运行在 Cloudflare Workers 上的记忆网关。你的 Chatbox、Claude Code、Codex 或自建代理先连接 Aelios，由 Aelios 转发给模型，同时记录对话并在每轮对话中自动带回相关记忆。
+
+```text
+你的客户端  →  Aelios（识别助手、召回、记录）  →  上游模型
+```
 
 ## 让 AI 帮你配
 
-用 Claude Code、Codex 这类能跑命令的 AI，或者连上了 Cloudflare MCP 的 AI，把这段话发给它：
+如果你使用 Claude Code、Codex、Cursor 等能执行命令的 AI，或已连接 Cloudflare MCP 的 AI，把下面这段话直接发给它。
 
 ```text
 帮我装好、配好 Aelios（我的 AI 记忆网关）。先读 https://raw.githubusercontent.com/Aelios-project/Aelios/main/docs/setup-with-ai.md ，照着做。需要我在浏览器里点、或者需要我自己填 key 的时候，停下来告诉我去哪儿填。
 ```
 
-从零开始也行：它会帮你 fork、部署、生成 Cloudflare 令牌、配好助手、导入以前的记忆，最后交给你一个地址、一把 API Key 和要选的模型名，填进聊天软件就能用。你要准备一个 Cloudflare 账号（免费）和一个模型的 key；自己动手的只有在浏览器里点「允许」（新装两次），和把模型的 key 存进 Cloudflare 后台（它会告诉你去哪儿填）。
+从空白 Cloudflare 账号或已有部署开始都可以。AI 会帮你 Fork、部署、生成 Cloudflare 令牌、配置第一位助手并按需导入旧记忆或聊天记录，最后交给你地址（Base URL）、API Key 和模型名。你只需准备一个免费的 Cloudflare 账号和模型厂商的 Key，亲自在浏览器里授权登录并将厂商 Key 存进 Cloudflare 后台，凭证全程不经过对话。
 
-推荐 **API 模式加 MCP 连接器**：聊天经过 Aelios，每句话自动记、自动想起来；再接上 MCP，助手还能主动查、主动记。只有 Claude 订阅、没有 API 的，才只用 MCP。
+推荐同时开启 **API 模式** 与 **MCP 连接器**。API 模式负责每句话的自动记录与自动召回，MCP 让助手能够主动检索、写入和管理笔记。若只有 Claude 订阅而没有 API，可单独接入 MCP（使用 Claude Code 时配合仓库里的 Hook）。
 
-想自己动手，看下面的三步。
+想自己动手部署，照下面三步即可完成。
 
-## 怎么用
-
-就三步。
+## 快速开始
 
 ### 1. 部署
 
-先 Fork 本仓库，再部署你的 Fork。这样以后每次更新都只要点一下（见[更新到最新版](#更新到最新版)）。
+先 Fork 本仓库再部署你的 Fork，以后同步更新只需点一下（见 [更新到最新版](#更新到最新版)）。
 
-1. 点本页右上角的 **Fork**。
-2. 在 Cloudflare 后台进 **Workers & Pages → Create → Import a repository**，连上 GitHub，选你的 Fork。项目名保持 `companion-memory-proxy`，构建命令 `npm ci`，部署命令 `npm run deploy`。部署命令会自己建好 D1 数据库、Vectorize 索引和队列。
-3. 部署好以后，进 Worker 的 **Settings → Variables and Secrets**，加 Secret `CHATBOX_API_KEY`：自己编一个密码，比如 `sk-my-aelios`。只有这一个必填，其余可选的钥匙见 [SECRETS.md](SECRETS.md)。
+1. 点击本页右上角的 **Fork**。
+2. 在 Cloudflare 控制台进入 **Workers & Pages → Create → Import a repository**，关联 GitHub 并选中你的 Fork。项目名保持 `companion-memory-proxy`，构建命令填 `npm ci`，部署命令填 `npm run deploy`。部署脚本会自动创建 D1 数据库、Vectorize 索引与 Queue 并应用全部数据库迁移。
+3. 部署完成后，打开 Worker 的 **Settings → Variables and Secrets**，新增一个类型为 **Secret** 的 `CHATBOX_API_KEY`，填入自编的高强度随机密码（例如 `openssl rand -base64 32` 生成的值）。这是唯一的必填密钥，其余可选密钥说明见 [SECRETS.md](SECRETS.md)。
 
-部署完会得到一个地址，类似：
+部署完成后会得到类似下面的 Worker 地址。
 
-```
+```text
 https://companion-memory-proxy.<你的子域>.workers.dev
 ```
 
-不要用裸 `wrangler deploy`，那样不会建库。
+部署请始终使用 `npm run deploy`。直接运行 `wrangler deploy` 会跳过资源初始化与迁移。
 
-**不推荐：一键部署按钮。** [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Aelios-project/Aelios)
+**一键部署按钮** [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/Aelios-project/Aelios)
 
-按钮能用，但 Cloudflare 是把本仓库复制一份到你账号里的新仓库，不是 Fork。复制品在 GitHub 上没有 Sync fork，以后每次更新都得手动把新代码拉过去。实在要用的话：表单里只必填 `CHATBOX_API_KEY`；Vectorize 那栏照抄 Dimensions `1024`、Metric `cosine`；构建命令 `npm ci`，部署命令 `npm run deploy`。已经用按钮装好了？看[用按钮装的怎么办](#用按钮装的怎么办)。
+按钮会在你的 GitHub 账号里新建一份独立仓库副本，没有 **Sync fork** 按钮，后续升级需手动拉取代码。若使用按钮部署，表单只需填 `CHATBOX_API_KEY`，Vectorize 保持 Dimensions `1024` 与 Metric `cosine`，构建命令 `npm ci`，部署命令 `npm run deploy`。已经通过按钮装好的部署可按 [用按钮装的怎么办](#用按钮装的怎么办) 切换到 Fork。
 
 ### 2. 加一个助手
 
-浏览器打开：
+在浏览器打开管理面板。
 
-```
+```text
 https://<你的 Worker 地址>/admin
 ```
 
-填 Worker 地址和刚才那把钥匙，进「设置」。
+填入 Worker 地址与 `CHATBOX_API_KEY` 登录，进入 **设置**。
 
-1. **上游地址**：填你的 Cloudflare 账号 ID（32 位）。要用完整聊天转发的话，再在 Worker Secrets 里加 `CLOUDFLARE_API_TOKEN`。
-2. **助手**：点「添加助手」，例如：
+1. 在 **模型与上游** 中填入 32 位 Cloudflare 账号 ID（或自定义 OpenAI 兼容地址）。需要通过 Cloudflare AI Gateway 做完整聊天转发时，在 Worker Secrets 中添加 `CLOUDFLARE_API_TOKEN`。
+2. 在 **助手** 中点击 **添加助手**，填写以下三项。
 
-   | 栏 | 填什么 | 例子 |
-   |---|---|---|
-   | 名字 | 地址里那一段，小写英文 | `coder` |
-   | 主模型 | 只有这些模型会记、会召回 | `anthropic/claude-opus-4-5` |
-   | 钥匙 | 谁能用这个助手 | 勾选主钥匙 |
+   | 字段 | 作用 | 示例 |
+   | --- | --- | --- |
+   | 名字（`slug`） | URL 中的路径段，小写英文 | `coder` |
+   | 主模型 | 仅匹配到的模型触发召回和记录（支持 `*` 通配） | `anthropic/claude-opus-4-5`、`*deepseek*` |
+   | 钥匙 | 允许哪些 Worker 密钥访问该助手 | 勾选主钥匙（`CHATBOX_API_KEY`） |
 
-3. 点「保存」。
+3. 点击 **保存**。
 
-一个助手一个地址。名字写成 `coder`，地址就是：
+每位助手对应一个独立入口路径，名字为 `coder` 的助手地址如下。
 
-```
+```text
 https://<你的 Worker 地址>/coder/v1
 ```
 
-主模型才有记忆。没登记的模型（比如 Claude Code 里的小模型）只是路过，不记也不召。
+只有登记在主模型列表中的模型才会启用记忆，后台分类器或杂务小模型会自动静默透传。
 
-用 Claude Code、Codex、Cline 这类工具写代码时，Aelios 只记说的话：代码块记成 `[code]`，读文件、跑命令、改文件的步骤不记。想全记，在助手的「召回空间、思考块、字数上限、写代码过滤」里关掉「写代码时只记说的话」。
+使用 Claude Code、Codex、Cline、opencode 等编程代理时，Aelios 默认只记录人类对话语言，代码块记为 `[code]`，并跳过读文件、执行命令和改文件等工具步骤。如需完整记录，可在助手高级选项中关闭「写代码时只记说的话」。
 
-### 3. 客户端指过来
+### 3. 连接客户端
 
-API Key 一律填 `CHATBOX_API_KEY`。模型名写成 `厂商/模型`，比如 `anthropic/claude-opus-4-5`。
+客户端 API Key 统一填 `CHATBOX_API_KEY`，模型名需携带厂商前缀（如 `anthropic/claude-opus-4-5` 或 `deepseek/deepseek-chat`）。
 
-| 你用什么 | 填这个地址 |
-|---|---|
-| Chatbox、Cherry Studio 等 | `https://<Worker 地址>/coder/v1` |
-| Claude Code | `ANTHROPIC_BASE_URL=https://<Worker 地址>/coder` |
-| Codex | `base_url = https://<Worker 地址>/coder/v1`，并设 `wire_api = "responses"` |
+| 客户端 | 配置方式 |
+| --- | --- |
+| Chatbox、Cherry Studio 等 OpenAI 兼容软件 | 地址填 `https://<你的 Worker 地址>/coder/v1` |
+| Claude Code | `ANTHROPIC_BASE_URL=https://<你的 Worker 地址>/coder` |
+| Codex | `base_url = "https://<你的 Worker 地址>/coder/v1"` 并设置 `wire_api = "responses"` |
 
-不带助手名的 `/v1` 会走这把钥匙的第一个助手。
+省略助手名直接请求 `/v1` 时，自动路由到该密钥有权使用的第一位助手。
 
-试一句：「请记住：我的测试暗号是苹果星星-0428。」过一会儿再问：「我的测试暗号是什么？」答出来就通了。
+发送一句「请记住，我的测试暗号是苹果星星-0428」，过一会儿在新对话里问「我的测试暗号是什么」，能答出即表示接入成功。
 
 ## 更新到最新版
 
-GitHub 不会自己更新 Fork。有新版本时：
+GitHub Fork 不会自动同步上游新提交。
 
-1. 在 GitHub 打开你的 Fork，点 **Sync fork → Update branch**。
-2. Cloudflare 看到新提交会自己构建、部署，进度在 Worker 的 **Deployments** 里看得到。
+1. 在 GitHub 打开你的 Fork，点击 **Sync fork → Update branch**。
+2. Cloudflare 检测到新提交后自动运行 `npm ci` 与 `npm run deploy`，应用新的 D1 迁移并完成上线。
 
-记忆、设置、助手和钥匙都存在你的 Cloudflare 账号里，不在仓库里，同步不会丢。改设置请在 `/admin` 里改，别去改 Fork 里的文件，这样 Sync fork 一直是点一下就好，不会冲突。
-
-想让它自动同步？[Pull](https://github.com/apps/pull) 这个 App 能定时帮 Fork 同步。但那样每个新版本都会不经你看就直接上线，包括数据库迁移；而且 Pull 默认把你的 Fork 硬重置成本仓库，你自己的提交会被丢掉。推荐手动点同步。
+所有记忆、设置、助手配置和密钥都保存在你的 Cloudflare 账号中。日常参数都在 `/admin` 修改，Fork 仓库保持干净即可一键同步。
 
 ### 用按钮装的怎么办
 
-按钮装出来的是复制品，不是 Fork，没有 Sync fork。把 Worker 换到 Fork 上就好，记忆和设置都在 Cloudflare 里，不会动。
+把按钮创建的副本切换到 Fork 不会影响已有数据和设置。
 
-1. Fork 本仓库。
-2. 如果你当时在按钮的设置页改过 D1 数据库或 Vectorize 索引的名字：进 Worker 的 **Settings → Build → Build Variables and Secrets**，加 `CMP_D1_NAME` 和 `CMP_VECTORIZE_NAME`，填你改过的名字。不加的话，构建会新建两个空的，记忆看起来像没了（其实还在旧库里）。
-3. 在 **Settings → Build** 点 **Disconnect**，再点 **Connect** 选你的 Fork，构建命令 `npm ci`，部署命令 `npm run deploy`。
-4. 如果 Cloudflare 往你的 Fork 提了一个修 Worker 名字的 PR，合掉它。
+1. 在 GitHub 上 Fork `Aelios-project/Aelios`。
+2. 如果当初用按钮部署时改过 D1 数据库或 Vectorize 索引名，先在 **Settings → Build → Build Variables and Secrets** 添加 `CMP_D1_NAME` 与 `CMP_VECTORIZE_NAME` 填回原名，让部署脚本复用旧资源。
+3. 在 **Settings → Build** 点击 **Disconnect**，再点击 **Connect** 选择你的 Fork，构建命令 `npm ci`，部署命令 `npm run deploy`。
+4. 如果 Cloudflare 自动向你的 Fork 提了对齐 Worker 名称的 PR，合并即可。
 
-之后 Cloudflare 会在你的 Fork 有变化时从它构建，所以下次点 Sync fork 就更新上来了。在那之前 Worker 继续跑现在的版本。
+## 它如何工作
 
-## 平时怎么管
+- **每轮自动召回** 每次人类发往主模型的对话，Aelios 并行检索 Vectorize（`memo-kb`）与 D1 全文索引，通过 Workers AI 重排模型（`@cf/baai/bge-reranker-base`）一次批量打分，并将高相关原文片段附加到本轮请求。热路径不调用生成式大模型。
+- **白天整理（Daytime Dream）** 默认开启（`ROLLING_DREAM`）。白天对话每累积一段（默认 10 条或 8,000 字），先由 `@cf/cloudflare/clef-flash` 判断是否有值得留存的新信息或决定，再由 `DREAM_MODEL`（默认 `workers-ai/@cf/zai-org/glm-4.7-flash`）生成待审候选或明确决定。
+- **夜间整理与 Clef 自动审核** 每日定时任务（`10 20 * * *` UTC）处理白天尚未覆盖的剩余对话（含 3 天回看补跑），由 Cloudflare 的 `@cf/cloudflare/clef` 决策模型审核待审候选（`CLEF_AUTO_REVIEW` 默认开启，支持在面板逐条撤回），随后生成每日日记、周记与月记并执行留存清理。
+- **多空间读取** 每位助手写入一个 `namespace`，可通过 `readNamespaces` 最多同时召回 8 个空间（如读取历史归档库或共享知识库）。
+- **溯源与数据留存** 原始聊天默认保留 7 天（`MESSAGES_RETENTION_DAYS`）。长期未改写、未召回、未再提及的记忆 180 天后标记过期（置顶、身份与人格记忆永不过期），再过 30 天硬删除。首页垃圾桶按钮默认只清理该条垃圾原话，按撤回模式删除时仅沿明确引用链移除相关衍生记忆。
 
-打开 `/admin`，左边是菜单（手机上点左上角 ☰）。菜单最下面能切中文 / English 和白天 / 夜间；没选过语言时跟着浏览器走。
+完整的存储、Dream 调度、来源溯源与当前决定投影设计见 [docs/memory-lifecycle.md](docs/memory-lifecycle.md)。
 
-| 页面 | 干什么 |
-|---|---|
-| **首页** | 今天聊了什么（点 ♥ 收进珍贵；不想留的，比如报错、乱码、突然一句拒答，点垃圾桶删掉，夜里整理、写日记和召回都不会再读到）、等你处理的事、昨晚的整理和最近一篇日记 |
-| **待审** | 夜间整理出来的候选记忆。默认每晚由 Cloudflare 的 clef 审完，「本周自动处理」里列着定下的，不对就撤回。设置里关掉 clef 后候选留在「日常」等你批（可以勾几条一起记住或丢弃），也可以让助手用 MCP 自己审。从别处导进来的单独放在「导入的」，只等你自己点 |
-| **日记** | 每天一篇，还有每周和每月小结（五周左右以前的周记会并进当月的月记）。哪篇写空了，打开点「用原文重写这篇」 |
-| **记忆库** | 重要记忆：浏览、搜索、改、合并、移除；被原地改写过的在「历史」里能看到改之前的样子，也能恢复。还有珍贵、黑话、小本本、世界知识 |
-| **星图** | 把记忆画成一张 3D 星图看（单独的页面） |
-| **夜间整理** | 夜间整理（Dream）每晚跑了什么、收成了什么；也能手动补跑某一晚，见下面 |
-| **导入导出** | 导出备份，导入清单或聊天记录 |
-| **设置** | 常用、助手、模型与上游、全部设置、连接与密钥、排查工具（召回记录、维护） |
+## 日常管理（`/admin`）
 
-想让 AI 记住、忘掉、改掉什么，在面板点就行。
+打开 `/admin` 即可管理全部记忆空间。侧栏底部支持切换中文/English（默认跟随浏览器语言）以及浅色/深色主题。
+
+| 页面 | 功能 |
+| --- | --- |
+| **首页** | 今日对话（点爱心收进珍贵，点垃圾桶删除报错、乱码或拒答行）、待处理提醒、昨晚整理摘要与最新一篇日记 |
+| **待审** | 候选记忆队列。开启 Clef 自动审核后，判定结果列在 **本周自动处理** 中并支持一键撤回。关闭 Clef 后日常候选留待人工批或助手经 MCP 审核。外部导入候选始终停留在 **导入的** 分栏等待手动确认 |
+| **日记** | 每日日记、每周汇总与每月汇总（约五周前的周记自动并入月记），原文仍在保留期内可点击 **用原文重写这篇** |
+| **记忆库** | 按 **重要**、**珍贵**、**黑话**、**小本本**、**交接信**、**世界知识** 六栏浏览、搜索、编辑、合并与恢复修订历史 |
+| **星图** | 在独立页面（`/admin/starmap`）展示 3D 记忆星图 |
+| **夜间整理** | 查看白天整理积压与窗口状态、最近 7 晚运行记录、当晚收成，以及手动补跑某一晚 |
+| **导入导出** | 导出备份（`md` 或 `jsonl`）、导入记忆清单、解析聊天记录抽候选，以及零模型调用的聊天原文归档 |
+| **设置** | 常用开关、助手配置、模型与上游（含 ChatGPT 套餐与模型清单）、全部设置、密钥状态与排查工具（召回记录与向量维护） |
 
 ### 手动补跑某一天的 Dream
 
-夜里的整理失败了，或者想马上整理某一天：
+需要补跑漏掉的日期或立即整理某一天时，按以下步骤操作。
 
-1. 打开 **夜间整理**，确认左上「正在查看」是对的空间。
-2. 在「手动整理一晚」里选日期，**取消勾选「只预览，不写入」**（默认勾着，勾着只预览、不写入），一般不要勾「已经整理过的也重来」。「最近 7 晚」里失败的那一晚有「重跑这一晚」，点一下会帮你填好。
-3. 点「开始」。提示「已排队」之后就可以关页，任务在后台跑，回来刷新能看到结果。
-4. 每点一次只处理一批（`DREAM_MAX_MESSAGES` 条，默认 40）。一天聊得多就多点几次，直到提示「这一晚已经整理过了」。最后一批做完会自动把这一天的日记写好。
+1. 打开 **夜间整理**，确认左上角 **正在查看** 选中了目标空间。
+2. 在 **手动整理一晚** 中选择日期（或直接点击失败记录旁的 **重跑这一晚**），取消勾选 **只预览，不写入** 以执行真实写入。
+3. 点击 **开始**。非预览任务会进入持久队列 `MEMORY_QUEUE` 后台执行，关闭浏览器不会中断。
+4. 每次执行处理一批（`DREAM_MAX_MESSAGES`，默认 `40` 条），该日对话较多时多点几次直至完成。最后一批结束后自动写出当天日记。
 
-- 按钮是灰的、提示任务可能已中断：先看 Worker 日志确认它确实停了，再点「核查后标记为已中断」，然后重新点。
-- 日记写空了、只有一句「整理了什么」：那是 Dream 留下的草稿，到日记页点「用原文重写这篇」。聊天原文只留 7 天，过了就重写不了。
-- 再细的执行规则、API 和限制见下面[给维护的人 → Dream 的执行与失败状态](#dream-的执行与失败状态)。
+若某次任务超过 20 分钟未确认完成，先检查 Worker 日志再点击 **核查后标记为已中断**，即可解锁新的手动任务。
 
-### 搬记忆：导出、导入
+### 导出、导入与聊天档案
 
-在「导入导出」页，每样都按当前选的空间来：
+**导入导出** 页面中的所有操作均针对当前选中的空间。
 
-- **导出**：md 或 jsonl。md 一行一条（日期、正文、#标签、反引号里的 key），能直接打开改，改完原样导回来：key 一样的会改写原来那条，旧版留着。
-- **导入整理好的条目**：一行一条，`- 2025-12-15 [偏好] 内容 #标签`，日期、类型、标签都可以省；普通的 md 列表、一段段文字也认。页面上有一段提示词，贴给原来用的 AI，它就按这个格式把记得的事列出来。可以直接写进库（一字不差的跳过，跟库里很像的转去审核），也可以全部先进审核。
-- **导入聊天记录**：认 ChatGPT、Claude 导出的 `conversations.json`、酒馆的 `.jsonl`、「名字：内容」一行一句的文本。文件在页面里拆开、按天切段，一段段交给夜里整理记忆用的那个模型（`DREAM_MODEL`）读，抽出来的只进待审页「导入的」，点了才算数；页面上看得到进度和花了多少 token。原话只存被候选引用的那几句，不进聊天记录表，不受 7 天清理影响，也不会被夜里再整理一遍。页面关了下次选同一个文件接着做。
+- **导出** 支持 `md` 与 `jsonl`。Markdown 每行一条记忆，包含日期、正文、`#标签` 与反引号键名，本地修改后原样导回会按 key 原地更新并保留历史版本。
+- **导入整理好的条目** 支持 `- 2025-12-15 [偏好] 喜欢乌龙茶 #饮食`（日期、类型和标签均可省略）以及普通列表或段落。可选择直接入库（完全重复跳过，高度相似转入待审）或全部先进待审队列。
+- **导入聊天记录** 在浏览器本地解析 ChatGPT 与 Claude 导出的 `conversations.json`、酒馆 `.jsonl` 以及「名字：内容」文本，按天分片交给 `DREAM_MODEL` 抽候选并写入待审页 **导入的** 分栏。仅保留被候选引用的原话，不受 7 天清理影响，中途关页下次选同一文件自动续传。
+- **聊天档案** 选择 **仅归档原文，供关键词搜索** 时零模型调用按会话归档全文。在 **设置 → 数据留存** 打开 **自动归档新聊天**（`CHAT_ARCHIVE_ENABLED`）可自动归档后续新对话。MCP 客户端使用 `search_chat` 检索 2 至 120 字符原词或短语，并将命中 ID 传给 `search_chat` 的 `around` 参数即可查看同会话上下文。档案默认长期留存（`CHAT_ARCHIVE_RETENTION_DAYS`）。
 
-**聊天档案**也从这个导入页进。选「仅归档原文，供关键词搜索」，按会话保存聊天正文，导入时零模型调用。接了 MCP 的客户端可以用 `search_chat` 搜 2–120 字符的原词或短语，再把命中的 ID 交给 `around` 查前后文。想自动保存新聊天，在「设置 → 数据留存」打开「自动归档新聊天」。档案从入档起算，默认长期留存。搜索走现有 D1 的文字索引，自动召回、`wake_up` 和 Dream 继续读各自原有的数据。
+## 接入方式与可选功能
 
-## 它实际在做什么
+### 完整 Cloudflare AI Gateway 与自定义模型清单
 
-```
-你的客户端  →  Aelios（认助手、记、召回）  →  模型
-```
+1. 在 Cloudflare 控制台 **AI → AI Gateway** 创建网关并存入各家厂商 API Key（BYOK）。
+2. 在 Worker Secrets 中添加 `CLOUDFLARE_API_TOKEN`（权限建议勾选 `AI Gateway Run`、`AI Gateway Read`、`Workers AI Read`，维护工具另加 `Vectorize Read`）。
+3. 在 `/admin` → **设置 → 模型与上游** 填入 32 位 Cloudflare 账号 ID 并添加助手。
 
-- 你每说一句，相关旧记忆会贴到这次对话里。
-- 对话原文先存下来；夜里自动整理成长期记忆（Dream），每个助手用自己在聊的那个模型决定记不记，它定下的你随时能撤回。
-- 记忆存在你自己的 Cloudflare（D1 + Vectorize），不绑某个聊天窗口。
+未配置 AI Gateway 或 Cloudflare 令牌时，记忆召回、MCP 和 Workers AI 整理同样可以正常运行。
 
-一个助手可以写一个空间、读好几个空间。比如新对话写 `coder`，同时还能读旧库 `coder-old` 和共享的 `shared-docs`。不填召回空间就只读自己那个。
+若想精简客户端里看到的模型列表，可在 **设置 → 模型与上游 → 模型清单 → 编辑** 中勾选常用模型、手填自定义 Provider 或动态路由名，并逐个测试连通性。保存后 `GET /v1/models` 按添加顺序返回这份清单，清单外的模型仍可按名称正常调用。
 
-## 可选功能
+### 使用自己的 ChatGPT Plus / Pro 套餐
 
-**完整聊天网关**（想让 Aelios 转发各家模型，用你自己的 key 计费）
+通过 OpenAI 的 Sign in with ChatGPT 直接使用个人套餐额度，无需额外 API Key。
 
-1. Cloudflare → AI → AI Gateway，建一个 gateway，把各家 key 存在它下面。
-2. Worker Secrets 加 `CLOUDFLARE_API_TOKEN`。
-3. `/admin` 设置里，上游填 32 位账号 ID，再加助手。
+1. 打开 `/admin` → **设置 → 模型与上游 → ChatGPT 套餐 → 管理 → Continue with ChatGPT** 完成登录授权。
+2. 授权后浏览器跳转到无法打开的 `127.0.0.1` 地址，复制地址栏完整 URL 粘贴回 `/admin` 并点击 **完成登录**。
+3. 模型名写成 `chatgpt/<模型名>`（点 **测试** 查看账号可用型号），在助手主模型中加入 `chatgpt/*` 即可启用记忆。
 
-不配这些，记忆召回和夜间整理也能跑（走 Workers AI）。这三步可以交给 AI 做，见[让 AI 帮你配](#让-ai-帮你配)。
+令牌使用由 `CHATBOX_API_KEY` 派生的密钥加密存储在 D1 中（更换 `CHATBOX_API_KEY` 后需重新登录）。Chat Completions、Anthropic Messages 与 Responses 客户端均可走这条线路，支持函数工具与联网搜索，托管工具（生图、文件搜索、代码解释器、远端 MCP）不受支持。`DREAM_MODEL` 与 `DIARY_MODEL` 也可填 `chatgpt/<模型名>`，用量计入套餐限额。GPT 模型的召回注入位置与提示词缓存细节见 [docs/memory-gateway.md](docs/memory-gateway.md)。
 
-**挑哪些模型显示在客户端里**（AI Gateway 有几千个模型，只能从列表里选模型的聊天 App 会被全部倒出来）：`/admin` 设置 → **模型与上游** → 模型清单 → **编辑**，从上游目录里点 `+` 选出你在用的，再手填目录里没有的名字（自定义 Provider、动态路由、`:floor` 这类后缀写法）。清单里每个模型旁边的连接按钮会按聊天客户端的方式发一条很短的真请求，通了就变成小绿点；`−` 把它从清单里拿掉。`GET /v1/models` 之后只返回这份清单，按你添加的先后顺序。只改显示：清单外的模型照样能按名字调用，跟以前一样。留空就什么都不变（显示整个目录）。存了清单之后，`chatgpt/…` 模型只有你选了才会显示，选择器里它们排在最前面。
+### 在 Claude 官方 App、Claude Code、Codex 里用 MCP 记忆
 
-**用你的 ChatGPT 套餐**（有 ChatGPT Plus / Pro，想让助手直接用套餐额度，不用 API key；走的是 OpenAI 的 Sign in with ChatGPT）
+将支持远程 Streamable HTTP MCP 的客户端指向以下地址。
 
-1. `/admin` → 设置 → **模型与上游** → ChatGPT 套餐 → **管理** → *Continue with ChatGPT*，登录并同意。
-2. 同意之后浏览器会跳到一个打不开的 `127.0.0.1` 页面，**这是正常的**：把地址栏里那一整条地址复制下来，贴进 `/admin` 里的框，点「完成登录」。
-3. 模型名写 `chatgpt/<模型名>`；点「测试」能看到你这个账号能用哪些。想让它带记忆，把 `chatgpt/*` 加进助手的主模型。
-
-要知道的：它只连你自己的账号，别把这条线路分给别人。用量计入你套餐的限额（ChatGPT 设置 → Usage 里管）。chat/completions、Anthropic messages、responses 三种格式的客户端都能用（前两种会翻成 Responses 再翻回来，Claude 那种带思考块的也行）；OpenAI 的套餐线路不收图片生成、文件搜索、代码解释器、MCP 这类托管工具，函数工具和联网搜索可以。不用加新的 Secret：token 加密存在 D1 里，密钥由 `CHATBOX_API_KEY` 派生，换了这把 key 就要重新登录。`npm run deploy` 会把新迁移一并应用。夜间任务也能用套餐：在设置里把 Dream 用的模型（日记模型也行）填成 `chatgpt/<模型名>`。它们一晚上会发好几次请求，都算在套餐额度里；哪晚额度用完，这些任务就像别的模型报错一样失败，记忆库本身不受影响。
-
-使用 GPT-6.2 时，Aelios 会把 Chat 和 Messages 客户端的系统提示放到 `input` 开头的 developer 消息里，使其具备[提示词缓存](https://developers.openai.com/api/docs/guides/prompt-caching)资格。ChatGPT 套餐、OpenAI API（含 Cloudflare 代付和 BYOK）及 OpenRouter 的 GPT 聊天模型，都会保留原样的对话，把召回作为仅供本轮参考的引用数据。原生 Chat Completions 在末尾追加独立的 developer 消息（GPT-4 及更早用 system）。GPT-6.2 起，OpenAI Responses 把召回放在 `input` 之后的顶层 `instructions` 中。更早的模型及 OpenRouter Responses 在末尾追加 developer 条目。客户端原有的指令、缓存断点和缓存键的语义照旧。Responses 客户端可以传入 `prompt_cache_options`（包括用于[缓存诊断](https://developers.openai.com/api/docs/guides/prompt-caching/diagnostics)的 `comparison_response_id`）和内容块上的缓存断点。Chat 请求的 reasoning effort 高于 `minimal` 时也会请求思考摘要；GPT-6.2 在省略 effort 时同样请求摘要，保留模型自己的默认思考强度；摘要是否返回、缓存是否复用取决于上游模型和套餐。ChatGPT 套餐的缓存路由可按会话传入稳定的 `x-aelios-session-id` 请求头（也接受 Codex 的 `session-id`）；两个头都没有时，以正文的 `prompt_cache_key` 为线索。Aelios 将它与已认证身份的记忆空间、代号一起哈希，用所得的不透明值同时设置上游 `session-id` 和 `prompt_cache_key`。没有提供线索的客户端保留原行为。Chat 流式请求要接收用量，请传 `stream_options: { "include_usage": true }`。上游报告的缓存写入会保留在 Chat 的 `prompt_tokens_details` 和 Messages 的 `cache_creation_input_tokens` 中。
-
-**在 Claude 官方 App（网页、手机）、Claude Code、Codex 里用 MCP 记忆**
-
-```
-https://<Worker 地址>/mcp?token=<CHATBOX_API_KEY>
+```text
+https://<你的 Worker 地址>/mcp?token=<CHATBOX_API_KEY>
 ```
 
-- Claude 官方 App：在连接器页面（claude.ai/customize/connectors）添加自定义连接器，填上面的地址。网页上加好，手机 App 里也有。工具权限里把只读那一组设成「总是允许」，不然每次想起来都要点一下。
-- 官方 App 不读 MCP 服务器自带的使用说明。想让它记得用，在个人偏好或项目说明里贴这段：
+需要跨设备保存带 `?token=` 的地址时，建议使用权限受限的 `MEMORY_MCP_API_KEY`。
 
-```
+- **Claude 官方 App（网页与手机）** 在 `claude.ai/customize/connectors` 添加自定义连接器并填入上述地址，将只读工具组设为 **总是允许**。由于官方 App 不读取 MCP 服务器自带说明，请将以下提示语粘贴到个人偏好或项目说明中。
+
+```text
 我给你接了 Aelios 记忆连接器，那是你对我的长期记忆。每个新对话先调 wake_up 再回我；我提到以前的人和事，或者你要猜我的事之前，先 recall；我说了新的事、改了主意、许了约定，当场 remember；聊得差不多了调 log_conversation。
 ```
 
-- 官方 App 的对话不经过 Aelios，夜里的日记和候选靠助手调 `log_conversation` 交过来；走网关的客户端不用调。
-- 默认只列 10 个常用工具；要 `memory_get`、`memory_export` 这类维护工具，地址后面加 `&tools=all`。
+- **不经过网关的客户端** 官方 App 的对话不经过 Aelios 网关，需要助手调用 `log_conversation` 提交对话以便白天/夜间整理和写日记。已走网关的客户端自动记录，无需调用 `log_conversation`。
+- **工具集合** 默认暴露 12 个常用工具，在地址末尾加上 `&tools=all` 可额外启用 `memory_get` 与 `memory_export`。
 
-**也能当 magpie 插件用**（agent 已经走 [magpie](https://github.com/yetone/magpie) 网关时）：magpie 的 Aelios 插件通过 `POST /v1/hook/recall` 和 `/v1/hook/record` 每轮召回、按需记录，不用把 agent 的上游改成 Aelios，见 [hook 接口](docs/memory-gateway.md#hook-接口magpie-插件用)。`GET /v1/hook/identities` 用同一把 API key 按配置原序发现有权助手，返回 `{identities:[{slug,name,mainModels}],selection:"first_matching_main_model",unmatched:"memory_off"}`，只包含这些公开提示，主模型保持原序，名字取去掉首尾空白的助手显示名或 slug。接口只读配置，无写入或外部请求；缺失或无效 key 返回 401，MCP key 或没有有权助手的 key 返回 403，配置失败返回 503，所有响应均带 `Cache-Control: private, no-store`。
+### 作为 magpie 插件使用
 
-只有 Claude 订阅、走不了 API 时，想让 Claude Code 每条消息自动召回、批量写回，用仓库里的 Hook：[`integrations/claude-code/`](./integrations/claude-code/README.md)。
+代理流量已走 [magpie](https://github.com/yetone/magpie) 网关时，可通过 `GET /v1/hook/identities`、`POST /v1/hook/recall` 与 `POST /v1/hook/record` 在不改动上游的前提下接入记忆，接口契约见 [docs/memory-gateway.md](docs/memory-gateway.md#hook-接口magpie-插件用)。
 
-**看图**
+### 仅 Claude 订阅的 Claude Code Hook
 
-加 Secret `GUIDE_DOG_API_KEY`，客户端改成：
+只有 Claude 订阅而无法走 API 模式时，可安装仓库自带的零依赖 Python Hook，为 Claude Code 提供每条消息自动召回与批量写回，详见 [integrations/claude-code/README.md](integrations/claude-code/README.md)。
 
-- 地址：`https://<Worker 地址>/v1/guide-dog`
-- 模型：`companion`
+### 看图转发（导盲犬）
 
-导盲犬只转述图片，不写记忆。
+添加 Worker Secret `GUIDE_DOG_API_KEY` 后，客户端可将看图请求发往 `https://<你的 Worker 地址>/v1/guide-dog/chat/completions`（或 Base URL `https://<你的 Worker 地址>/v1/guide-dog`，模型名 `companion`）。导盲犬仅负责转述图片，不写记忆。
 
-**住在 Cloudflare 里的伴侣：[Aelios-resident](https://github.com/Aelios-project/Aelios-resident)**
+### 住在 Cloudflare 里的伴侣（`Aelios-resident`）
 
-另一个 Worker（一个 Durable Object，基于 Cloudflare 的 Think），在 Telegram 和它自己的网页上跟你聊，两边是同一段对话。接上 Aelios 后，它的聊天跟别的客户端一样从你助手的 `/v1` 过，想起旧事、记下来都由 Aelios 做；它还会用记忆工具，搜网搜到的长期知识存进世界知识。另外：你停下来一阵，它给之后的自己写交接信；到点主动找你；搜网、读网页；接别的 MCP；模型、人设和设置都在它的网页上改。Workers 免费档就能跑。接法是在它的设置页填这个 Aelios 的地址、key 和用哪个助手聊（选的模型要在那个助手的主模型里），部署看它的 README。
+[Aelios-resident](https://github.com/Aelios-project/Aelios-resident) 是运行在 Cloudflare Workers 免费档上的独立 Durable Object 伴侣，将 Telegram 与网页聊天合为同一对话线程。在其设置页填入本 Aelios 的地址、密钥和助手名，即可共享长期记忆、交接信、联网搜索与定时问候。
 
-## 最容易踩的坑
+## 常见注意点与 Workers 免费档提示
 
-- 部署用 `npm run deploy`，不要裸 `wrangler deploy`。
-- 助手名字是地址的一部分，用 `coder` 这种英文，别用空格。
-- 模型名要带厂商前缀：`anthropic/claude-opus-4-5`，不要只写 `claude-opus-4-5`。
-- 只有助手里登记的主模型才有记忆。小模型、杂务模型别写进去。
-- Vectorize 索引别手动删（`memo-kb`，1024 维 cosine）。
-- 夜间整理页的「手动整理一晚」默认勾着「只预览，不写入」，勾着只预览、不写入；真跑要先取消。
+- **部署命令** 始终运行 `npm run deploy`，确保 D1、Vectorize、Queue 与迁移同步就绪。
+- **Workers 免费档额度** 白天整理（`ROLLING_DREAM`，默认开）与夜间整理共用 Workers AI 每日 10,000 neurons 额度。免费档用户可在 `/admin` 设置中关闭 **白天整理**，把抽取统一留在夜间执行。
+- **模型命名** 必须带厂商前缀（如 `anthropic/claude-opus-4-5`、`deepseek/deepseek-chat`），仅将主力聊天模型登记进助手主模型列表，避免把杂务小模型混入记忆。
+- **助手名字** 会作为 URL 路径段，使用不含空格的小写英文。
+- **Vectorize 索引** 保持 `memo-kb`（1024 维余弦）不被手动删除。
+- **手动 Dream 预览选项** 夜间整理页默认勾选 **只预览，不写入**，实际补跑前先取消勾选。
 
-## 想看细节
+## 文档索引
 
-- 网关怎么路由、怎么记、怎么召回：[docs/memory-gateway.md](docs/memory-gateway.md)
-- 请求会改什么、thinking 怎么处理：[docs/request-contract.md](docs/request-contract.md)
-- 哪些密钥必填：[SECRETS.md](./SECRETS.md)
-- 维护、端点、MCP 工具：下面这一段
+- AI 自动安装与配置指南 [docs/setup-with-ai.md](docs/setup-with-ai.md)
+- 网关架构、上游路由、GPT 缓存与 magpie Hook 契约 [docs/memory-gateway.md](docs/memory-gateway.md)
+- 记忆存储、召回、白天与夜间整理、溯源与留存机制 [docs/memory-lifecycle.md](docs/memory-lifecycle.md)
+- 请求净化、结构校验与 Anthropic thinking 策略矩阵 [docs/request-contract.md](docs/request-contract.md)
+- Secrets 与环境变量管理及旧 Fork 轮换指南 [SECRETS.md](SECRETS.md)
+- 安全策略与漏洞披露 [SECURITY.md](SECURITY.md)
 
 ---
 
 # 给维护的人
 
-Cloudflare Workers 上的记忆网关。帮用户部署时只关联**用户自己的 fork**，Secrets 都在用户自己的账号。
+## Cloudflare 资源清单
 
-| 资源 | 值 |
-|---|---|
+| 资源 | 默认值 |
+| --- | --- |
 | Worker | `companion-memory-proxy` |
-| D1 | `companion_memory_proxy` |
-| Vectorize | `memo-kb`（1024 维 cosine） |
-| Queue | `companion-memory` |
-| Embedding | `workers-ai/@cf/baai/bge-m3` |
+| D1 数据库 | `companion_memory_proxy` |
+| Vectorize 索引 | `memo-kb`（1024 维余弦） |
+| Queue | `companion-memory`（`max_batch_size = 1`） |
+| Embedding 模型 | `workers-ai/@cf/baai/bge-m3` |
+| Reranker 模型 | `@cf/baai/bge-reranker-base` |
+| 默认 Dream / 日记模型 | `workers-ai/@cf/zai-org/glm-4.7-flash` |
+| 筛选 / 审核模型 | `@cf/cloudflare/clef-flash` / `@cf/cloudflare/clef` |
 
-入口：`/<助手>/v1/chat/completions`、`/<助手>/v1/messages`、`/<助手>/v1/responses`。不带助手名的 `/v1/...` 走该钥匙的第一个助手。
+协助他人部署时只关联用户自己的 Fork，所有 Secret 均保留在用户自己的 Cloudflare 账号内。
 
-CF 上游：messages 上的 Claude（`anthropic/…`）走 Cloudflare 的 AI REST API（`api.cloudflare.com/…/ai/v1/messages`），REST 不认这个模型、或者令牌没有 Workers AI Read 时，退回网关上 Anthropic 的端点；chat 走 compat（全厂商，BYOK）；其余 messages 和 responses 走各厂商原生端点。网关用 /admin 里填的（AI Gateway ID，或贴进去的网关地址），留空就是账户默认网关。Worker 跑在哪（云区域，比如 `aws:ap-southeast-1`）也在那里设，下次 `npm run deploy` 时生效。模型名原样透传，厂商认不出来由上游报错。自定义 OpenAI 兼容地址原样转发。
+## 端点一览
 
-配置三层，都在 `/admin` 的「设置」：上游、助手、环境参数。优先级：面板保存的 > `GATEWAY_CONFIG` > 空配置。
-
-### 常用端点
+除 `/health` 与 `/admin` 外，全部接口均需 `Authorization: Bearer <key>`（`/mcp` 同时支持 `?token=`）。网关接口按助手钥匙列表鉴权，记忆接口按 `memory:read` / `memory:write` scope 鉴权。
 
 | 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/health` | 健康检查 |
-| GET | `/admin` | 管理面板 |
-| GET | `/v1/models` | 模型列表（上游目录，或你存的模型清单） |
-| POST | `/<助手>/v1/chat/completions` | OpenAI 兼容聊天 |
-| POST | `/<助手>/v1/messages` | Anthropic messages |
-| POST | `/<助手>/v1/responses` | OpenAI responses |
-| GET | `/api/gateway/models` | `/admin` 的模型选择器（主人钥匙）：上游全部模型 ID、你的 ChatGPT 模型、已存的清单 |
-| POST | `/api/gateway/models/test` | 单个模型的连通性测试（主人钥匙）：`{"model": "…"}` → 发一条很短的聊天请求，返回 `{ok, status, latency_ms, error?}`；不记录任何东西 |
-| GET / POST | `/api/gateway/chatgpt/*` | ChatGPT 套餐登录（主人钥匙）：`status`、`login`、`callback`、`test`、`welcome`、`logout` |
-| GET | `/v1/hook/identities` | 仅返回有权助手的路由提示；只读，无外部请求 |
-| POST | `/v1/hook/recall`、`/v1/hook/record` | 由客户端自行发送模型请求时的召回 / 按需记录 |
-| GET / POST | `/mcp` | MCP 记忆工具 |
-| GET / POST | `/v1/memories` | 记忆列表 / 新建 |
-| POST | `/v1/memory/recall` | 动态召回（hook 优先用这个） |
-| POST | `/v1/search/memories` | 原始搜索（不记账） |
-| POST | `/v1/ingest/messages` | 写入原始聊天 |
-| GET | `/v1/memory_boot` | 冷启动包（不含当前交接信） |
-| GET / PUT / DELETE | `/v1/handoff` | 当前交接信；写入和删除须带 GET 读到的 `expected_revision` |
-| GET | `/v1/diary` `/v1/diary/recent` | 日记 |
-| POST | `/admin/diary-rewrite` | 用当天聊天原文重写一篇日记：`{"date":"YYYY-MM-DD"}` |
-| GET | `/v1/dream/status` | 最近 7 天的 Dream 运行记录、正在跑的任务、游标 |
-| POST | `/v1/dream/run` | 手动做梦：`date`、`force`、`dry_run`；加 `"background":true` 交给队列，返回 202 和 `run_id` |
-| POST | `/v1/dream/resolve` | 把超过 20 分钟没确认完成的任务标记为已中断：`{"run_id":"…"}` |
-| GET / POST / DELETE | `/v1/precious` `/v1/glossary` | 珍贵原文 / 术语表 |
-| GET / POST / PATCH / DELETE | `/v1/notebook` | 小本本；`/:id` 打开、改、删一页，`DELETE ?confirm=all` 清空当前空间的小本本 |
-| GET / POST | `/v1/candidates` | 审核队列；`?scope=daily` 只要日常整理的，`/decisions?days=7` 自动决定清单，`/:id/undo` 撤回，`/:id/sources` 挂的原话 |
-| GET | `/v1/memories/export?format=md\|jsonl` | 导出当前空间的记忆和珍贵（`memory:read` 就够） |
-| GET | `/v1/memories/:id/revisions` | 这条记忆原地改写前的旧版 |
-| GET / POST | `/v1/import/*` | 导入：`info`、`entries/preview`、`entries`、`batches`、`chat/chunk`、`candidates` |
+| --- | --- | --- |
+| `GET` | `/health` | 健康检查与绑定状态 |
+| `GET` | `/admin`、`/admin/starmap` | 管理面板与 3D 记忆星图 |
+| `GET` | `/v1/models` | 上游模型目录或已保存的 `modelList` |
+| `POST` | `/<slug>/v1/chat/completions`、`/messages`、`/responses` | 记忆网关三协议入口（`/v1/...` 走该钥匙第一位助手） |
+| `GET` / `PATCH` | `/api/gateway/config`、`/env`、`/spaces`、`/recalls` | 主人配置、默认值、空间列表与召回排查日志 |
+| `GET` / `POST` | `/api/gateway/models`、`/models/test`、`/chatgpt/*` | 模型目录、单模型连通测试与 ChatGPT 套餐登录 |
+| `GET` / `POST` | `/v1/hook/identities`、`/recall`、`/record` | 外部网关 Hook 接口（magpie 插件） |
+| `GET` / `POST` | `/mcp` | Streamable HTTP MCP 服务 |
+| `GET` / `POST` / `PATCH` / `DELETE` | `/v1/memories`、`/v1/memories/:id`、`/revisions`、`/export` | 记忆读写、修订历史与 `md`/`jsonl` 导出 |
+| `POST` | `/v1/memory/recall`、`/v1/search/memories`、`/v1/ingest/messages` | 动态召回、不记账搜索与对话写入 |
+| `DELETE` | `/v1/raw/:id` | 删除原始对话行（默认 `?mode=clean`，`?mode=withdraw` 同步撤回引用该行的衍生记忆） |
+| `GET` | `/v1/memory_boot` | 冷启动包（不含当前交接信） |
+| `GET` / `PUT` / `DELETE` | `/v1/handoff` | 当前交接信，写删需携带 `expected_revision` 乐观锁 |
+| `GET` / `POST` / `PATCH` / `DELETE` | `/v1/notebook`、`/v1/notebook/:id` | 命名小本本页面（`DELETE ?confirm=all` 清空当前空间） |
+| `GET` / `POST` / `DELETE` | `/v1/precious`、`/v1/glossary` | 珍贵原话与共享黑话 |
+| `GET` / `POST` | `/v1/diary`、`/v1/diary/recent`、`/admin/diary-rewrite` | 日记读取与按原文重写单日日记 |
+| `GET` / `POST` | `/v1/dream/status`、`/run`、`/resolve`、`/admin/dream/harvest` | Dream 状态、同步或后台手动执行、卡死任务收尾与单晚收成 |
+| `GET` / `POST` | `/v1/candidates`、`/decisions`、`/:id/undo`、`/:id/sources` | 待审队列、Clef 自动判定记录、撤回与引用原话 |
+| `GET` / `POST` | `/v1/import/*` | 导入接口（`info`、`entries/preview`、`entries`、`batches`、`chat/chunk`、`candidates`） |
 
-非 `/health` `/admin` 都要 `Authorization: Bearer <key>`。网关按助手钥匙鉴权，记忆接口按 `memory:read` / `memory:write`。
+## MCP 工具
 
-### MCP 工具
+- **默认 12 个工具** `wake_up`、`recall`、`remember`、`keep_moment`、`forget`、`learn_word`、`read_diary`、`search_chat`、`log_conversation`、`list_memories`、`handoff`、`notebook`
+- **关闭 `CLEF_AUTO_REVIEW` 时** 额外列出 `memory_candidates` 与 `memory_review`
+- **带 `&tools=all` 参数时** 额外列出 `memory_get` 与 `memory_export`
+- **旧工具别名** `memory_boot`、`memory_recall`、`memory_search`、`memory_upsert`、`memory_supersede`、`memory_archive`、`memory_delete`、`memory_ingest`、`memory_pin`、`glossary_set`、`diary_get` 与 `memory_list` 仍可调用以兼容旧脚本，不再出现在默认列表里
 
-`wake_up` `recall` `remember` `keep_moment` `forget` `learn_word` `read_diary` `search_chat` `log_conversation` `list_memories` `handoff` `notebook`
+## Dream 模型与输出预算
 
-`handoff` 读、写、删当前空间唯一一封交接信（最多 20000 字符），工具自带写作提示词；人类也能在「记忆库 → 交接信」里编辑。只有明确调用 MCP `wake_up` 时，返回包才附上当前信；普通模型请求和 REST `/v1/memory_boot` 不会自动注入。当前信独立存储，不参与召回和夜间记忆提取。
+白天整理、夜间抽取、周记汇总与聊天导入默认使用 `DREAM_MODEL`（默认 `workers-ai/@cf/zai-org/glm-4.7-flash`），日记和月记可通过 `DIARY_MODEL` 单独指定。输出长度上限由 `DREAM_MAX_TOKENS` 控制（1 至 65,536）。在 `/admin` 设置中留空任意文本项都会沿用字段旁显示的生效默认值。仓库模板 `wrangler.toml` 将 `DREAM_MAX_TOKENS` 设为 `8000`。若部署层和面板均未提供新旧配置值，Workers AI 默认使用 `8000`，其他网关沿用上游默认上限。`chatgpt/...` 套餐线路始终使用上游自身上限。
 
-修改前先读：`GET /v1/handoff?namespace=…` 返回 `{ data: { content, revision, source, updated_at }, writing_guide }`。PUT 的 JSON 为 `{ "content": "…", "expected_revision": 0, "namespace": "…" }`；DELETE 的 JSON 带版本号和可选空间。版本号使用刚读到的值（从未写过才是 0）；版本过期返回 409，页面保留草稿。绑定固定空间的钥匙仍只能操作自己的空间。
+## 本地验证
 
-新版 Resident 自动投递交接信时带固定投递 ID 和原始生成时间。重试、乱序旧信不能覆盖更新的信或之后的手动修改与删除。Resident 信件超过 20000 字符时，仍完整保存原文并确认送达，当前交接信保持不变。如果交接信表不可用，`wake_up` 记录读取失败并返回其余开机包。旧版 Resident 仍按原方式投递聊天原文，不更新当前信；旧版 Aelios 忽略新版投递附带的信息。升级时先按正常 `npm run deploy` 流程更新 Aelios（会应用 `0021_current_handoff.sql` 迁移），再更新 Resident。
-
-`notebook` 是小本本：助手按页名自己读、自己改的笔记，比如备考进度。不会被自动召回，夜里不会被改写，也不会过期；在「记忆库 → 小本本」能看、能改、能删、能整本清空。
-
-clef 自动审关着时多列 `memory_candidates` `memory_review`；地址加 `&tools=all` 再多列 `memory_get` `memory_export`。旧名字（`memory_boot`、`memory_recall`、`memory_search`、`memory_upsert`、`memory_supersede`、`memory_archive`、`memory_delete`、`memory_ingest`、`memory_pin`、`glossary_set`、`diary_get`、`memory_list`）不再列出，按旧名调用照样能用。
-
-### 记忆怎么走
-
-写入：助手直写 `remember`；夜里 cron（`10 20 * * *`）从当天对话抽事实 → 候选由 Cloudflare 的 clef 判记住或放下（`CLEF_AUTO_REVIEW`，默认开；关掉后候选留给人工，或让助手用 MCP 的 `memory_candidates`、`memory_review` 自己审），并写日记 / 周记 / 月记。整理的是 `DREAM_TIME_ZONE` 里的「昨天」，按 `DREAM_MAX_MESSAGES` 条一批，一晚最多 `DREAM_MAX_RUNS` 批；没整理完的日子，之后几晚会各补一批（回看 3 天），等不及就在夜间整理页手动补。某一天最后一批做完才写那一天的日记。
-
-Dream 默认使用 `workers-ai/@cf/zai-org/glm-4.7-flash`，可通过 `DREAM_MODEL` 修改。日记和月记还可单独设置 `DIARY_MODEL`。在后台留空输出上限时，会继承部署值。仓库的部署模板将 `DREAM_MAX_TOKENS` 设为 8000。如果部署时新旧两项输出上限都没设，Workers AI 用 8000，其他网关由上游模型决定。ChatGPT 套餐线路始终使用自己的上限。
-
-召回：最后一句用户话 → 向量搜索 + 词面 → 原文片段批量重排 + 规则 → 把干净原文贴到当前消息末尾。默认不调用生成式 LLM，日常最多一条，回答旧事最多两条；低分不凑数，重排失败回落词面。分数与取舍可在 `/admin` → 设置 → 排查工具 查看。传输信封、哈希和消息 ID 不进入日常提示，同一会话里直接相邻且 90 秒内的两句会合并；主动搜索仍返回完整记录和 ID。日记不自动注入。
-
-清理：消息约 7 天；一条记忆 180 天里没被改写、没被想起、也没再被提到，才标过期（置顶和 identity、persona 不会过期），失效记录再过 30 天硬删。
-
-### Dream 的执行与失败状态
-
-**白天整理**是设置里的一个开关，默认开：白天每攒够一段对话（约 10 条），先由 Clef-flash 判断里面有没有值得记的，有就由 Dream 模型写进待审候选；夜里只处理白天没整理到的。几个细项收在开关下面。它白天就会调用模型，用 Workers 免费档的话可以考虑关掉。详见[白天整理说明](docs/memory-gateway.md#rolling-memory)。
-
-管理页「夜间整理」里的非预览手动 Dream 交给已有的持久化 `MEMORY_QUEUE`，确认入队后立即给出任务 ID；此后关页不会取消排队任务。页面每五秒查询状态，刷新后也能重新找到任务。队列每批只取一条消息，避免多个耗时 Dream 共用一次执行的时间预算。
-
-API 客户端在 `POST /v1/dream/run` 中显式传 `{"background":true}`，其余 namespace、date、force 参数照旧。确认入队返回 HTTP **202**，带 `data.run_id` 和 `data.status="queued"`，通过 `GET /v1/dream/status` 查询；缺队列或入队失败返回 **503**。和旧接口一样，每个手动任务只处理一批，不一定处理完整一天，是否还有后续批次要看游标。不传 background 的旧调用仍同步返回，dry-run 也保持同步。
-
-- 同一空间有 queued/running 任务时，不能再次后台入队，force 也不绕过。它不是覆盖 cron 和旧同步调用的全局租约。
-- 摘要、抽取每次调用含读响应体限时 120 秒；两段抽取阶段总预算八分钟，最多缩批三次。JSON 或结构不合格时，摘要与抽取一起改读同一小批，后半批留待之后处理；明确的空候选和坏输出分开。一份整体合格的输出里个别不可用的条目（空白、超长、类型不对）会被丢弃并在日志里计数，不再让整批失败；列表类型不对、缺少候选列表，或非空列表里一条都不可用，仍算坏输出。抽取调用与摘要共用同一份输出预算（`DREAM_MAX_TOKENS`，最高 65536）。模型或格式失败不推进游标、不主动删除这批原文，独立的保留期策略仍照常生效。
-- 超过 20 分钟还未确认完成的记录显示为**可能中断、状态未确认**，不再一直装作正常运行。这只是只读提示，不等于已经证明执行停止。旧的未收尾记录要先核对日志，再由操作者明确收尾，不会为了放行新任务而偷偷清掉。核对日志后，可在面板点**核查后标记为已中断**（或调用 `POST /v1/dream/resolve`，body 为 `{"run_id":"…"}`，权限同样是 `memory:write`），把超过 20 分钟的 queued/running 记录收尾；更新的或已结束的记录会被拒绝。收尾后该记录显示为出错，不再阻止新任务；它已经写入的内容不会回滚。
-- 每批 Dream 会在当天的日记条目上留一份整理草稿，当天最后一批做完后，真正的日记再把它替换掉。夜间 cron 只写昨天的日记，所以手动任务、手动补跑接口和 cron 补跑现在会在某一天的最后一批完成后自己写日记（最后一批没完成前什么都不做，日记写失败也不会撤销 Dream）。日记页的**用原文重写这篇**（`POST /admin/diary-rewrite`，body 为 `{"date":"YYYY-MM-DD"}`）可以重写任何聊天原文还在保留期内的一天，会替换它现在的文字；那一周已经汇总成周记后会被拒绝。
-- 条件领取防止同一任务重复投递时再次执行整理；这**不等于 exactly-once 完成，也不是自动崩溃恢复**。领取后出现未知结果、可能已部分落库时，不自动重放，先核查再重试。手动整理后的候选审核保留；审核失败不撤销已经完成的 Dream。
-
-### 本地验证
+测试依赖 Node.js 22+。
 
 ```bash
-npm install
+npm ci
 npm run verify
+npm run lint
 ```
 
-测试需要 Node.js 22+。
-
-CI 里 lint 是阻断的：`npm run lint` 必须零 error 才能合并。仍有一些 `noNonNullAssertion` warning，这条规则在 `biome.json` 里被降为 warning，不影响退出码 —— 清不清由改到那行的人自己判断，别用 Biome 的自动修复批量改，它会把 `x!.y` 换成 `x?.y`，把「出错就炸」变成「悄悄返回 undefined」。
+`npm run verify` 执行 TypeScript 类型检查、全量单元测试以及 5 项校验脚本（包含对本地临时 D1 逐条应用 `migrations/` 中的全部迁移）。CI 要求 `npm run lint` 零 error，既有的 `noNonNullAssertion` warning 不阻断合并，切勿使用 Biome 自动修复批量将 `x!.y` 改写为 `x?.y`。
 
 ## License
 
-AGPL-3.0
-
-可自由使用、修改；若把修改后的版本对外提供网络服务，须以相同许可开源修改后的源码。
-
-v1 最终封存点在 tag `v1-final`（当时仍是 MIT）。
+AGPL-3.0。你可以自由使用和修改源码，若对外提供基于修改版的网络服务，须按同一许可开源修改后的代码。v1 最终版本封存在 tag `v1-final`（当时为 MIT 许可）。
 
 ## 交流
 
-QQ 群：**1091783659**
+QQ 群 `1091783659`
