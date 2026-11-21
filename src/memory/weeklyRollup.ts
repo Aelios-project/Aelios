@@ -84,12 +84,6 @@ function readRollupModel(env: Env): string {
   return readModelName(env, ["DREAM_MODEL", "DAILY_DIGEST_MODEL", "SUMMARY_MODEL"], DEFAULT_DREAM_MODEL);
 }
 
-function readRollupMaxTokens(env: Env): number {
-  const parsed = Number(env.DREAM_MAX_TOKENS || env.DAILY_DIGEST_MAX_TOKENS || 3000);
-  const numeric = Number.isFinite(parsed) ? parsed : 3000;
-  return Math.min(Math.max(Math.floor(numeric), 1), 8000);
-}
-
 function formatTodayDateLabel(timeZone: string, now = new Date()): string {
   return formatDateLabel(now, timeZone);
 }
@@ -192,25 +186,15 @@ async function callWeeklyRollupModel(
   meta: { week: string; dayCount: number }
 ): Promise<WeeklyRollupModelCallResult> {
   const model = readRollupModel(env);
-  const maxTokens = readRollupMaxTokens(env);
-
   const startedAt = Date.now();
-  console.log("weekly_rollup: calling model", {
-    week: meta.week,
-    model,
-    dayCount: meta.dayCount,
-    promptChars: prompt.length,
-    maxTokens
-  });
 
   let text: string;
   try {
     text = await callModelWithRetry(env, {
       model,
       prompt,
-      maxTokens,
       logPrefix: "weekly_rollup",
-      logMeta: { week: meta.week }
+      logMeta: meta
     });
   } catch (error) {
     return {
