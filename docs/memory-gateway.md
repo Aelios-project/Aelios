@@ -1,142 +1,76 @@
-# Aelios 记忆网关（开发分支）
+# Aelios 记忆网关与路由架构
 
-Aelios 负责身份、临时召回和自动记录，客户端 Harness 负责工具循环。
+Aelios 负责身份识别、单轮记忆召回与对话记录，客户端工具链负责自身的工具循环。记忆存储、白天与夜间整理、来源溯源和留存策略详见 [docs/memory-lifecycle.md](memory-lifecycle.md)，请求净化与思考块边界详见 [docs/request-contract.md](request-contract.md)。
 
-管理面板顶部可以选择助手，默认查看该助手的写入空间，也可在第二个下拉框中查看它的召回空间。共享空间单独查看，不把多份库混成一个列表。首次打开会尝试匹配之前查看的空间，否则从默认空间切到第一个助手；已手动选择的旧库会保留。选「自选空间」（或者一个助手都没配）时，第二个下拉框列出 default、所有有记忆的空间（带条数）和正在看的空间；正在看的空间没有记忆而别的空间有时，面板会提示并可一键切过去，避免浏览器记着的旧空间名让记忆库看起来像被清空。其他空间可在「高级：手动指定空间」中输入。
+## 组件分工
 
-面板的选择只影响浏览和管理记忆，不会修改客户端身份路由或助手的写入/召回配置。切换空间会清空旧列表和编辑状态，刷新当前页面，并忽略旧空间迟到的列表响应。
-上游只有一个:Cloudflare AI Gateway(BYOK 走 gateway 面,REST 只花 Unified 额度),一把 CF token 管所有,无需 LiteLLM。
-
-## 分工
-
-| 组件 | 工作 |
+| 组件 | 职责 |
 | --- | --- |
-| Worker | 原生协议入口、身份解析、主模型记忆追加、流式字节透传 |
-| CF AI Gateway | Provider 识别(`author/model`)、BYOK 计费、限流、日志 |
-| CF Dynamic Routes | 预算、路由与 fallback（在 CF 侧配置，本网关不实现） |
-| Workers AI | embedding、reranker、默认 Dream 模型 |
-| Vectorize | 按 namespace 检索长期记忆 |
-| D1 | 配置、原始可见对话、记忆、去重记录 |
-| Queue | 异步记录，失败重试，重复投递幂等 |
-| Cron | 对各记录身份的 namespace 运行 Dream、日记与留存清理 |
+| Worker | 原生协议入口、身份与主模型判定、单轮记忆注入、流式透传与响应头诊断 |
+| Cloudflare AI Gateway | Provider 路由（`author/model`）、BYOK 密钥托管、Unified Billing、限流与日志 |
+| Cloudflare Dynamic Routes | 预算、跨模型路由与上游回退（在 Cloudflare 控制台配置） |
+| Workers AI | 向量化（`@cf/baai/bge-m3`）、重排（`@cf/baai/bge-reranker-base`）、默认 Dream（`glm-4.7-flash`）与 Clef 判定 |
+| Vectorize (`memo-kb`) | 按 `namespace` 隔离的 1024 维余弦向量索引 |
+| D1 (`companion_memory_proxy`) | 网关配置、原始对话、记忆、候选、日记、来源撤销表、ChatGPT 加密令牌 |
+| Queue (`companion-memory`) | 异步对话落库、白天整理窗口与后台手动 Dream |
+| Cron (`10 20 * * *` UTC) | 夜间 Dream、Clef 审核、日记与周/月记汇总、留存清理与令牌保活 |
 
-本轮没有引入 Agents SDK / 自建 loop，也不做三协议之间的转换。
-每个协议通过下文的 BYOK 路由访问 CF 对应端点；不再使用消耗 Unified 额度的 REST `/ai/v1` 地址转发聊天。
-模型名原样透传，厂商识别交给 CF 的 `author/model` 命名；选错厂商由 CF 报错。
+## 配置模型与管理视角
 
-## 配置模型
+全部运行时配置集中在 `/admin` 的「设置」页，分为三层。
 
-配置只有三层，全部在 `/admin` 的「设置」里完成：
+1. **连接与上游** 填写 32 位 Cloudflare 账号 ID、完整 AI Gateway 地址或自定义 OpenAI 兼容地址。Cloudflare 令牌存放在 Worker Secret `CLOUDFLARE_API_TOKEN` 中。
+2. **助手（Identities）** 每位助手配置路径名 `slug`（URL 第一段）、主模型规则 `models` 与允许使用的密钥列表 `keys`。写入空间 `namespace` 默认与 `slug` 相同，另可配置 `readNamespaces`、说话人称呼（`userName` / `assistantName`）、`codingFilter`、`thinkingPolicy` 与 `maxMemoryChars`。
+3. **环境设置** `/admin` 设置白名单内的运行参数覆盖部署默认值。开关切换即时保存，文本项失焦保存（`PATCH /api/gateway/config` 按项合并），留空即恢复字段旁显示的部署值或内置默认值。
 
-1. **连接**：CF 账号 ID（或完整地址）。token 不放面板，放 Worker Secret `CLOUDFLARE_API_TOKEN`。
-2. **助手**：每位三格——名字（slug，即 URL 路径段）、主模型列表、可用钥匙。
-   写入空间 `namespace` 默认同名；可另设 `readNamespaces` 召回空间列表。
-3. **环境设置**：`settings` 白名单里的运行参数，面板直接改，覆盖部署默认值。
-   常用几项放在最上面，其余按组收起、可搜；开关点了就存，文字改完离开输入框就存（`PATCH /api/gateway/config`，只改带来的那项，值为空即恢复默认）。
-   连接和助手改完点底部浮出的「保存」一起存。
+配置优先级为 D1 中保存的面板配置高于 Worker 环境变量 `GATEWAY_CONFIG`，两者皆空时回退为空配置。管理面板顶部的空间选择器仅切换当前浏览和管理的记忆空间，不影响客户端路由或助手配置。
 
-主模型白名单是唯一的记忆开关：**只有主模型的对话召回记忆、进入 Dream；其余模型安静透传**。
-匹配容忍 `author/` 前缀，支持 `*` 通配（如 `*fable*` 同时认 `claude-fable-5-1` 和 `anthropic/claude-fable-5-1`）。
-这样 Claude Code 的 haiku 小模型、Codex 的杂务模型天然不沾记忆，不需要维护黑名单。
+### 主模型白名单
 
-配置优先级：D1 保存的配置 > Worker `GATEWAY_CONFIG` JSON 变量 > 空配置。
-空配置的模型列表为空，聊天请求返回配置提示。
-`GET /v1/models` 透传上游模型目录：CF 账号走 AI Gateway 的 compat 目录（`gateway.ai.cloudflare.com/v1/{账号}/{网关}/compat/models`，REST 无 GET /models），自定义地址走 `{base}/models`；上游答不上或无 CF token 时回落为主模型白名单提示。
+主模型白名单决定哪些请求启用记忆功能。匹配时兼容 `author/` 前缀并支持 `*` 通配符（例如 `*deepseek*` 同时匹配 `deepseek-chat` 与 `deepseek/deepseek-chat`）。未命中的辅助模型与杂务小模型直接透传，跳过召回与记录。
 
-配置里的可选字段 `modelList`(`/admin` 设置里的「模型清单」,`PATCH /api/gateway/config` 带 `{"modelList":[…]}`,`null` 或 `[]` 清掉)只决定 `GET /v1/models` 显示什么:有清单时直接按清单(添加顺序)返回,不请求上游,上游挂了也能答,`x-aelios-models: list`,每项多一个 `aelios: {"main": true|false}`(这个模型在发请求的这个身份下是不是主模型,即聊天会不会召回和记录,判断和聊天路径同一个函数),给选择器事先标出"记不住"的,别的客户端忽略它;没有清单就是上面那套,一个字节不变。它不是白名单——聊天请求从不对照它,清单外的模型照样按名字调用。清单项是模型名原样(最多 300 项、每项不含空白、最长 200 字符),自定义 Provider、动态路由、`:floor` 之类上游目录里没有的写法也能列进去。存了清单之后 `chatgpt/…` 模型不再自动附在后面,要选了才显示。`POST /api/gateway/models/test`(主人钥匙,`{"model":"…"}`)给清单里每个模型的「测连通」按钮用:按聊天客户端同一条线路(含 `chatgpt/` 走套餐)发一条很短的真请求(`max_tokens: 32`;OpenAI 推理模型回 400 要 `max_completion_tokens` 时换这个再发一次),不带记忆、不记录;返回 `{ok, status, latency_ms, reply?|error?}`,通的标准是回来一个 chat.completion,其余照上游原话报错(截到 300 字),25 秒没回算超时。`GET /api/gateway/models`(主人钥匙)给 `/admin` 的选择器用:上游目录的全部模型 ID(去重、排序)、已登录的 ChatGPT 模型和已存的清单;上游读不到时 `source: "unavailable"` 加 `reason`。
+### 模型展示清单（`modelList`）
 
-聊天协议路由(仅 CF 上游;自定义地址原样透传):
+可选配置字段 `modelList`（位于 `/admin`「设置 → 模型与上游 → 模型清单」，通过 `PATCH /api/gateway/config` 传入 `{"modelList": [...]}`，传 `null` 或 `[]` 清空）控制 `GET /v1/models` 返回的模型列表。
 
-- 网关:`/admin` 上游地址里贴的网关地址带的那个,其次是设置 `AI_GATEWAY_ID`;都没有就是账户默认网关(REST 不带网关头,带网关路径的地址填 `default`)。夜整等后台调用用同一个网关。`AI_GATEWAY_ID` 和下面的运行地区都在 `/admin`「模型与上游」里上游地址下面。
-- Worker 运行地区:设置 `PLACEMENT_REGION`,写成 `服务商:区域`(`aws:ap-southeast-1`、`gcp:asia-east1`、`azure:southeastasia`,存的时候只认这个格式)。Worker 改不了自己跑在哪,所以它在下次 `npm run deploy` 时才生效:`scripts/setup-cloudflare.mjs` 从 D1 的配置里读出来,写成那次部署 `wrangler.toml` 的 `[placement] region`;构建环境变量 `PLACEMENT_REGION` 也认,/admin 的优先。留空不写 `[placement]`,之前设过的地区随那次部署取消。
-- messages 上的 `anthropic/…` 走 AI REST API `https://api.cloudflare.com/client/v4/accounts/{账号}/ai/v1/messages`:CF token 以 `Authorization: Bearer` 携带(令牌要有 `Workers AI Read`),指定了网关就加 `cf-aig-gateway-id` 头;模型名用 CF 目录的写法(`anthropic/claude-opus-5.5`,横线写法 `claude-opus-5-5` 会被换成点,REST 只认点);`anthropic-beta`/`anthropic-version` 原样带过去,回来的是 Anthropic 原样的 JSON、报错和 SSE;BYOK 只认别名 `default` 的 key,没有就走统一计费。REST 回 404「Model not found」/5007(目录里没有这个模型)或 401 code 10000(令牌缺 `Workers AI Read`)时,同一请求改发 `…/{网关}/anthropic/v1/messages`,这个 isolate 之后也直接走那边;模型自己的报错(包括 403)照原样回。
-- chat 走 `…/{网关}/compat/chat/completions`(全 provider,BYOK)。REST 只认统一计费目录里的模型,`deepseek/…` 这类只有 BYOK 的、`google-ai-studio/`/`grok/`/`workers-ai/` 这类按 provider 起的名字、`openrouter/…` 和 `custom-…` 在 REST 上都 404 或 500(2026-11-05 实测),所以 chat 不走 REST。
-- 其余 messages 走 `…/{网关}/{provider}/v1/messages`,responses 走 `…/{网关}/{provider}/v1/responses`(openai 特例无 v1),模型名剥掉 provider 前缀,CF token 以 `cf-aig-authorization` 头携带;provider 不认的协议由上游如实报错。responses 没搬到 REST:REST 的 `/ai/v1/responses` 会把回复 id 换成 `id-…`,靠 `previous_response_id` 续聊的客户端接不上。
-- 无前缀的模型名网关内直接 400,不打上游。
+- 未配置清单时，`GET /v1/models` 透传上游目录（Cloudflare 走 `compat/models`，自定义地址走 `{base}/models`），上游不可用时回落为主模型规则提示。
+- 配置清单后，`GET /v1/models` 直接按添加顺序返回清单内容，响应头带 `x-aelios-models: list`，每项附加 `aelios: {"main": true | false}` 标注该模型在当前身份下是否启用记忆。清单最多 300 项，每项不含空白且最长 200 字符，支持自定义 Provider、动态路由及 `:floor` 等后缀写法。
+- `modelList` 仅影响模型目录展示，清单之外的模型仍可按名称正常调用。`POST /api/gateway/models/test` 可按真实聊天方式检测单个模型连通性，且不记录对话。
 
-`chatgpt/<模型>` 是第二条上游:主人自己的 ChatGPT 套餐(Sign in with ChatGPT,开源应用 token 共享)。模型名带 `chatgpt/` 就不碰上面的 CF 上游和 `CLOUDFLARE_API_TOKEN`(没配 CF 也能用),直接 `POST https://api.openai.com/v1/responses`,Bearer 是 `/admin` 登录拿到的 access token,body 一律 `store:false`、`stream:true`。chat 和 messages 请求会翻成 Responses（system 转为系统指令，tool_calls / tool_use 转为 `function_call`，tool_result 转为 `function_call_output`，工具展开并显式写 `strict`。Messages 的 thinking 设置映射成 `reasoning.effort` 和 `summary:"auto"`，历史里的 thinking 块丢掉，回来的 reasoning 摘要变成 thinking 块）,回来的 SSE 先翻回调用方的协议(chat chunk / Anthropic 事件序列,块严格一个接一个)再交给记录器,所以记忆召回和落库跟别的主模型一样。三种协议都收,responses 基本直通;messages 不套 Anthropic 的 thinking 绑定策略;官方列出的不支持字段会被剥掉并计入 `x-aelios-normalized`,托管工具、`previous_response_id`、`n>1`、音频输入在发出去之前就 400。首个有内容的事件之前失败(用量到顶、没有资格)是真 HTTP 状态,之后的失败是流里的 error 帧。登录、刷新(refresh token 每次轮换,靠 D1 里的租约串行)、日志红线的细节在 `src/chatgpt/` 各文件头的契约注释里。
-OpenAI 的 GPT 聊天模型在 ChatGPT 套餐、OpenAI API（含 Cloudflare 代付与 BYOK）及 OpenRouter 上都保留原样的历史。本轮的召回作为引用数据交给模型。Chat Completions 在末尾附加独立消息。OpenAI Responses 的 GPT-6.2 及更新模型用顶层 `instructions`，更早的模型和 OpenRouter Responses 在 `input` 末尾附加 developer 条目。
+## 上游路由规则
 
-管理配置允许 `CHATBOX_API_KEY` / `DEBUG_API_KEY`。旧 MCP 与记忆管理权限不变。
+入口支持三种协议，路径为 `/<slug>/v1/chat/completions`、`/<slug>/v1/messages` 和 `/<slug>/v1/responses`，省略 `<slug>` 时匹配该密钥的第一个授权助手。
 
-## 首次配置
+### Cloudflare 上游与运行地区
 
-1. 使用 `feat/memory-gateway` 分支，运行 `npm ci`。测试需要 Node.js 22+。
-2. 按原部署流程创建 D1、Vectorize 和 Queue，应用全部 migrations，包含 `0012_memory_gateway.sql`。
-3. Worker Secrets 只放两把钥匙：`CHATBOX_API_KEY`（自己编的，进面板用）和 `CLOUDFLARE_API_TOKEN`
-   （使用现有 AI Gateway token 权限配置；第三方 Provider 密钥在 CF BYOK 面板管理）。
-4. 打开 `/admin`，填 CF 账号 ID，添加助手（比如 `coder`），保存。
-5. 客户端按助手接入：
+- **网关选择** 优先读取上游地址中附带的网关名，其次读取设置项 `AI_GATEWAY_ID`，均留空时使用账号默认网关（路径中为 `default`，REST 接口不带网关头）。夜间与白天整理共用同一网关。
+- **Worker 运行地区** 在「模型与上游」设置 `PLACEMENT_REGION`，格式为 `provider:region`（如 `aws:ap-southeast-1`、`gcp:asia-east1`、`azure:southeastasia`）。由于 Worker 无法在运行期修改自身部署区域，`scripts/setup-cloudflare.mjs` 会在下次执行 `npm run deploy` 时读取该值写入临时 `wrangler.toml` 的 `[placement]` 段（也支持构建环境变量，以 `/admin` 为准）。留空则在下一次部署时移除区域固定。
+- **Claude Messages 路线** `messages` 协议下以 `anthropic/` 开头的模型默认走 Cloudflare AI REST API（`https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1/messages`），使用 `Authorization: Bearer` 携带 `CLOUDFLARE_API_TOKEN`（需含 `Workers AI Read`），指定网关时附带 `cf-aig-gateway-id` 头，并将目录模型版本中的横线写法转换为点号写法（如 `claude-opus-5.5`）。当 REST 返回 `404 Model not found`、`400 No such model` / `5007`、`401 code 10000` 或 Unified Billing 不可用时，同一请求自动改发 `{gateway}/anthropic/v1/messages`（带 `cf-aig-authorization`）并在当前 isolate 记住该退路。模型自身返回的错误原样透传。
+- **Chat Completions 路线** 所有 provider 的 `chat/completions` 统一走 `{gateway}/compat/chat/completions`，完整支持 BYOK、第三方 provider 前缀和 `custom-*` 自定义 provider。
+- **其余原生端点** 其余 `messages` 请求走 `{gateway}/{provider}/v1/messages`，`responses` 请求走 `{gateway}/{provider}/v1/responses`（`openai` 与自定义 provider 路径不加 `/v1`），自动剥离模型名前缀并以 `cf-aig-authorization` 鉴权。无 provider 前缀的模型名在网关内直接返回 `400`。
+- **自定义兼容地址** 上游填写非 Cloudflare 的 OpenAI 兼容基址时，按协议路径直接转发并以 Bearer 鉴权。
 
-| 客户端 | 配置 |
-| --- | --- |
-| Chatbox 等 OpenAI 兼容 | base URL `https://<host>/coder/v1`，填 `CHATBOX_API_KEY` |
-| Claude Code | `ANTHROPIC_BASE_URL=https://<host>/coder`，token 同上 |
-| Codex | `base_url = "https://<host>/coder/v1"`，`wire_api = "responses"` |
+### ChatGPT 套餐线路（`chatgpt/<model>`）
 
-不带助手名的 `/v1/...` 走该钥匙的第一个助手，方便只配一个的时候用。
-轮询和多 key 池需要时自行部署 new-api 之类的上游，把它的地址填进「连接」即可——配置模型不变。
+模型名以 `chatgpt/` 开头时走用户本人的 ChatGPT Plus / Pro 套餐（通过 `/admin` 中的 Sign in with ChatGPT 登录，访问令牌与轮换刷新令牌由 `CHATBOX_API_KEY` 派生密钥加密存入 D1，借助 D1 租约串行刷新）。
 
-## 临时记忆生命周期
+- 该线路直接请求 `https://api.openai.com/v1/responses`（强制 `store: false`、`stream: true`），绕过 Cloudflare AI Gateway 与 `CLOUDFLARE_API_TOKEN`。
+- Chat Completions、Anthropic Messages 与 Responses 客户端均可使用。前两种协议在网关内双向转换为 Responses（包含工具调用与思考摘要），随后按常规主模型完成召回与记录。
+- 托管工具（图片生成、文件搜索、代码解释器、远端 MCP）、`previous_response_id`、`n > 1` 与音频输入会在发出前返回 `400`，函数工具与联网搜索正常支持。
+- 首条内容事件之前的上游失败返回真实 HTTP 状态码，流开始后的错误以流内 error 事件传递。
+- 会话缓存亲和度读取 `x-aelios-session-id`（兼容 Codex 的 `session-id`），两者均缺失时读取请求体中的 `prompt_cache_key`，与已认证的记忆空间和助手代号哈希后同时写入上游 `session-id` 与 `prompt_cache_key`。
 
-| 入口 | 新输入 | 工具续轮 |
-| --- | --- | --- |
-| `/v1/chat/completions` | 最后一项 user | role=tool 不召回 |
-| `/v1/messages` | 最后一项 user，非纯 tool_result | tool_result 内部文字不是用户原话 |
-| `/v1/responses` | 字符串 input 或最后一项 user message | function_call_output 等输出不召回 |
+### GPT 模型召回位置与提示词缓存
 
-纯图片仍原样转发，没有文本 query 时不召回。tool_result 旁有独立 text 块时，按新的用户指令处理。
-各记忆来源（普通记忆、珍贵、黑话、证据原话、日记印象）和已授权的召回空间统一产生候选，由一次最终选择决定注入。日常合计最多 1 条联想，回答旧事最多 2 条；`MEMORY_FILTER_MAX_OUTPUT` 可进一步收紧或设为 0。珍贵不会自动占据注入位置。原文提取成不超过 400 字的连续窗口，程序按选择编号摘取，附「相关旧事，可自然提及，不作当前事实」或「回答旧事」用途；所有来源共用身份的字数预算。完整窗口放不下时跳过，继续尝试后面的条目。ID 和来源只留在管理记录中。显式 MCP / REST 搜索仍返回完整记录和 ID，不套自动注入预算。
+对于 ChatGPT 套餐、OpenAI API（含 Cloudflare 代付与 BYOK）以及 OpenRouter 上的 GPT 聊天模型，Aelios 保留客户端原始对话历史，将本轮召回内容封装为仅供当前回合参考的 JSON 引用数据。
 
-默认自动召回不调用生成式 LLM：向量＋词面提名候选，所有来源/空间汇合后，用 Worker 的 `AI` 绑定调用 `@cf/baai/bge-reranker-base` 一次批量重排。重排看到的是将要引用的原文片段（原话会附说话人），不再先截整条记忆的前 240 字打分、再另选摘句。网关跳过原来的整条记忆重排，显式 MCP / REST 搜索保持原有流程。最多 16 条候选、每条 4 个片段，总计不超过 64 个；候选提名仍有词面和数量限制，未进入池的记忆无法靠最后重排找回。
+- **Chat Completions** 在消息末尾追加独立 `developer` 消息（GPT-4 及更早系列使用 `system`）。流式请求如需返回用量统计，客户端可传入 `stream_options: { "include_usage": true }`。
+- **OpenAI Responses** 自 GPT-6.2 起，召回数据写入位于 `input` 之后的顶层 `instructions`，同时把来自 Chat/Messages 转换的系统提示放在 `input` 开头的 `developer` 消息中以命中提示词缓存。更早版本的 GPT 与 OpenRouter Responses 在 `input` 末尾追加 `developer` 条目。
+- **缓存与思考摘要** 客户端原有的 `instructions`、`prompt_cache_options`（含缓存诊断参数 `comparison_response_id`）、内容级缓存断点与缓存键均保留原义。Chat 请求在 `reasoning.effort` 高于 `minimal` 时请求思考摘要，GPT-6.2 在省略 `effort` 时同样请求摘要并保持模型默认强度。上游返回的缓存写入用量会保留在 Chat 的 `prompt_tokens_details` 与 Messages 的 `cache_creation_input_tokens` 中。
 
-`/admin → 设置` 可以调整：
+## 共享与迁移空间
 
-- `MEMORY_RERANKER_MODEL`：默认上述 Workers AI 模型，也接受 `workers-ai/@cf/...` 前缀。缺失、关闭或调用失败时，回落词面 top-1，不补调 LLM。
-- `RECALL_RERANK_MIN_SCORE`：默认 **0.25，只是未经线上校准的起点**。分数是该模型的原始相关分数，不是事实正确率；换模型应重新观察分布。低分不强取第一条。
-- `RECALL_RERANK_TIMEOUT_MS`：默认 1500 毫秒，上限 5000。超时丢弃迟到结果并改走词面；Workers AI 绑定不支持 AbortSignal，请求可能仍完成并计费。
-
-规则统一处理已在可见历史的片段、重复内容、日常 0–1 条和旧事参考最多 2 条；同空间共享来源 ID 的多条候选本次只呈现一条。同空间同一 `fact_key` 取相关分最高的一条，不整组作废。来源不足时无法可靠识别所有改写重复；不靠相似度删除库里的记录。
-
-短记录不拆句；长记录选连续原文并带前一句。带前句仍超过 400 字的片段会跳过。重排只判断相关性；日记印象不作为事实答案。“最近一次/哪天”这类要排事件顺序的问题不自动注入；闲聊里提到“最近”仍可联想。主动搜索仍可取完整证据。
-
-### 触发器联想召回（默认关闭）
-
-现有召回是描述性的：问题和记忆在字面或向量上像，才召得回来。问题和记忆语义相关但几乎不共享词汇时，第一跳就是空的——而 `RELATION_EXPANSION` 是从已召回的种子往外走的出口扩展，种子为空时它也无从展开。
-
-触发器通道补的是入口这一头。写入期给每条记忆挂几个触发器：要么是沿 is-a 阶梯往上一两级的语义锚点，要么是「提到它就大概率该想起这条记忆」的强关联场景；每条触发器附一句 bridge，写成 `<记忆里的线索> -> <一步推理>`，bridge 自己也进检索。召回时先查触发器索引，命中的触发器把它挂的记忆并进候选池，之后和别的候选一样过重排和地板分。
-
-三个设计上的硬约束，改之前先想清楚：
-
-- **门限很高（默认 0.85，只能往上调）**。这条通道不承担主要召回，它只在几乎可以肯定的时候补一刀。调低就开始往候选池灌噪音，而池子后面的重排和地板名额有限，噪音是要挤掉真命中的。
-- **只增不减**。触发器只往候选池里 union，不改已有命中的分数和顺序。`TRIGGER_RECALL` 关着时，召回结果和没有这个功能时逐字一致。
-- **触发器向量的 namespace 一律带 `trg:` 前缀**。它和记忆向量共用 `memo-kb` 索引，靠这个前缀和记忆召回隔离——`searchVectorMemories` 有一条不带 filter 的 legacy 查询兜底迁移期向量，只靠 `metadata.namespace` 严格相等来挡。去掉前缀等于把触发器直接漏进记忆召回结果里。
-
-一条触发器写三个向量：concept、bridge、两者拼接。召回时按触发器取三者里的最高分，三个角度只要有一个对上就算命中，不会被另外两个不像的拉平。
-
-建期在夜批里跑（`TRIGGER_BUILD`），只建增量——已经有触发器的记忆跳过，一夜最多 120 条。成本是每条记忆一次模型调用加三次向量化，所以模型别用太小的，触发器质量直接决定这条通道有没有用。记忆被删除时挂着的触发器一起摘掉。
-
-相关开关：`TRIGGER_RECALL`、`TRIGGER_RECALL_GATE`、`TRIGGER_RECALL_TOP_K`、`TRIGGER_BUILD`、`TRIGGER_BUILD_MODEL`。表结构见 `migrations/0016_memory_triggers.sql`。
-
-思路借鉴 T-Mem（EMNLP 2026，trigger-augmented retrieval）的 entity/bridge 触发器与三视图召回；这里只取了单条记忆粒度的那一半，没有引入它的 scene/horizon 层和场景图。
-
-`/admin → 设置` 的「为什么想起这件事」可按助手查看最近 20 次召回、候选摘句、选择理由、原始相关分数、分数下限、重排与筛选耗时、最终是否注入，以及空结果/错误。数据来自 `memory_events` 中的 `recall_explain`；`GET /api/gateway/recalls?identity=名字` 仅限主钥匙或维护钥匙。两个助手即使共用写入空间，记录也按助手过滤。旧日志缺少新字段时仍能查看。
-
-原话引用只在证据问题（暗号、原话、说过、哪天）打开；日常闲聊不扫 messages。所有来源都过滤已在请求历史里的同文窗口，重复候选只保留一份。上下文压缩移除的旧话可以再次召回。库里若本来就是归档摘要，摘出的仍是已存文字，不能恢复最初聊天措辞。
-
-工具续轮不搜索、不恢复旧补丁，下一个人类输入重新判断；原有 system、工具、历史块和 cache_control 不变。没有补丁缓存；重试可能再次搜索，写入按指纹去重。
-
-夜间抽取继续沿用现有审核流程，补充“一条围绕一件事、相邻来源合并、主体和状态清楚、来源 ID 不写正文”的要求。这里只改抽取指导，不自动批量改写旧库；原有事件和版本链继续保留。
-
-客户端消息若带 `<message from="…" msg_id="…">正文</message>` 或 `<wecom-message …>` 一类传输信封，只保存和检索正文；哈希、msg_id 不进召回词。客户端注入的 `<recap>`、`<system-reminder>` 以及「User stepped away; returning. Recap:」这类一看就不是用户发言的整段直接丢掉：不当成人类轮、不入库、不召回。助手侧「已回她。」一类回执同样丢掉；模型生成的工具调用（任何工具，不限微信）会作为助手发言进库，工具返回仍不进。普通散文里写 `<message>`、「帮我写个 recap」或「我跟她说已回她了」不受影响。旧数据无需先迁移，召回和夜间整理读取时也会清洗。相同会话中，最高分命中只和它时间上直接相邻、且间隔不超过 90 秒的句子合成一个事件；不会顺着 90 秒窗口把整段连续对话收成一条。源消息 ID 仍保留在内部 trace。
-
-如果第一响应只调用工具，后续最终回复可能不再看到记忆。“阅后即焚”不表示清除已经产生的模型影响、加密推理或上游日志。
-
-### 共享和迁移空间
-
-旧 v3 配置无需迁移数据库：`namespace` 继续表示唯一写入空间，省略时使用 slug。
-`readNamespaces` 省略时只读写入空间；显式数组表示**完整召回名单**，不自动补上写入空间；`[]` 表示只记录、不召回。
-最多 8 个唯一空间，只能在管理配置中设置，请求体、请求头都不能覆盖。
+每个助手只有一个写入空间 `namespace`（省略时等于 `slug`），可通过 `readNamespaces` 指定最多 8 个唯一召回空间。
 
 ```json
 {
@@ -148,216 +82,50 @@ OpenAI 的 GPT 聊天模型在 ChatGPT 套餐、OpenAI API（含 Cloudflare 代�
 }
 ```
 
-多个助手可以读同一空间，也可写同一空间。迁移时让新对话写新空间，召回保留旧空间；这里不搬移 D1 行或 Vectorize 索引。
-每个空间独立检索，同类候选轮流合并、同类型同内容去重，最后统一执行一次条数/字数预算。
-一个空间失败仍可用其他空间，全部失败报告召回不可用；trace 列出失败空间。
-注入计数回写条目所属空间，`recall_explain` 存在写入空间，记录每条来源空间。
-授权某助手读取共享空间，意味着该助手的所有可用钥匙都可召回其内容。
-Cron 继续维护配置的写入空间，避免只读共享关系无意触发另一个空间的 Dream。
+- 省略 `readNamespaces` 时仅读取自身写入空间。显式传入数组时按该完整名单召回，传入 `[]` 表示只记录、不召回。召回名单只能在管理配置中修改，无法通过请求头或请求体覆盖。
+- 跨空间检索并行执行、轮询归并、按类型与内容去重，最后统一应用单轮条数与字数预算。单个空间异常时继续返回其他可用空间的命中，全部失败才报告召回不可用。
+- 注入计数写回条目所属空间，`recall_explain` 记录在写入空间内。Cron 仅对配置中的写入空间运行 Dream，避免只读共享关系触发额外整理。
 
-### Anthropic thinking
+## 写代码对话过滤（`codingFilter`）
 
-召回片段只追加在最后一轮 user 消息尾部，下一轮请求里就没有了。思考块签名如果绑定前缀，
-这一轮生成的思考块到下一轮（工具续轮、之后每一轮）就对不上。
+当请求头（`User-Agent`、`x-title`、`Referer`、`originator`）识别为 Claude Code、Codex、Cline、opencode、Kilo Code、Aider 等编程代理，或工具定义同时包含命令行与文件编辑工具时，网关自动启用编程对话过滤。
 
-- `auto`（默认，不填即是）：走 CF 上的原生 Anthropic 线路（`anthropic/...`），或 OpenRouter 的 Claude Messages 线路（`openrouter/anthropic/claude-...`）时按 `drop_block` 处理，
-  其余线路按 `passthrough`。和显式 `drop_block` 不同，客户端没写 thinking 时不替它打开思考：
-  只有历史里已经有思考块（说明模型默认会想）才补 `adaptive` 和绑定；请求带了非默认 temperature 或强制
-  tool_choice 时不补（默认会想的模型不收这两样）；上游以 thinking 为由拒了补上的 `adaptive`（比如中途换成
-  不支持 adaptive 的 haiku-4-5），按客户端原样重发一次。2026-10-08 实测原生线路（Opus 5.5）默认校验前缀绑定：注入记忆那一轮如果调了工具，
-  续轮返回 400 `Invalid signature in thinking block. The block is bound to a different conversation`，
-  之后带着这段历史的每一轮也都 400。2026-11-16 的 OR Fable 5.2 合成工具回合也复现了同一错误；同一失配请求加上 binding 和 beta 后正常完成。
-- `passthrough`：不修改 thinking，记忆照常注入。实测 Vertex 线路默认不校验前缀绑定(补丁下轮消失,旧签名块仍 200),
-  只有客户端显式携带 `block_binding` 时前缀才进入签名范围。原生 Anthropic 线路选它会遇到上面的 400。
-- `drop_block`：在每次请求（含工具续轮）合并 `thinking.block_binding.prefix_mismatch_behavior: "drop_block"`，
-  以及 `thinking-binding-controls-2026-08-01` beta header；客户端没写 thinking 时直接补 `adaptive`。
-  仅适用于支持该 beta 的线路，会牺牲部分思考连续性。转发到原生 Anthropic 的 `custom-*` 线路要手动选它。
-- 显式 `thinking.type: "disabled"`：直接临时注入，不添加该 beta。
-- 注意:`drop_block` 依赖上游认识 `block_binding` 字段;Vertex 线路会直接 400 `unrecognizedProperty`,勿用于 Vertex。
-- 非主模型不自动启用 thinking，不自动添加 binding 设置。
+- 用户消息与未调用工作工具的助手回复会将代码块替换为 `[code]`。
+- 调用了工作工具的中间回合，仅保留面向人类的发言类工具调用，过滤读文件、跑命令、改文件的参数与返回，避免大段代码挤爆 8,000 字单条上限。
+- 召回仅在人类回合触发且剥离代码块进行检索。助手配置里设置 `codingFilter: false` 可关闭过滤并完整记录。
 
-本地只能验证结构，不能验证厂商的加密签名。历史签名块、空 thinking 文本、redacted data 原样保留。
-切换到 disabled 不会修复之前已经失配的历史；更换线路、压缩、修改工具或 system 造成的失配也由上游判断。
-完整审计矩阵、协议白名单范围见 [请求契约与 thinking 边界](request-contract.md)。
+## 缓存转换、思考块策略与工具字段学习
 
-### Responses 状态
+Aelios 单次请求只发往一个上游，不重排客户端前缀，也不主动插入提示词缓存断点，以维持各家模型的缓存命中。
 
-主模型请求强制 `store:false`，要求完整显式历史；含 `previous_response_id`、`conversation`、
-`item_reference` 时返回 400，避免服务端隐藏历史继续携带补丁。
-非主模型不做此检查：纯透传，服务端状态原样通过，不召回也不记录。
-`reasoning.encrypted_content` 原样通过，不能承诺加密推理里不含记忆影响。
+- **顶层 `cache_control` 兼容** 为兼容部分拒绝顶层 `cache_control` 的代理或 Vertex 线路，网关会将其转换为注入前最后一个可缓存块上的显式断点，原有断点保持不变，TTL 冲突或断点超过 4 个时提前返回 `400`。
+- **Anthropic thinking 策略** 支持 `auto`（默认）、`passthrough` 与 `drop_block`。默认 `auto` 在原生 Anthropic 线路及 OpenRouter Claude Messages 线路上遵循前缀失配处理策略，其余线路按 `passthrough` 透传。完整行为矩阵见 [docs/request-contract.md](request-contract.md)。
+- **工具字段自适应剥离** 当某条线路返回 `400` 并提示 `unrecognizedProperty=<字段>`（常见于 Vertex 拒绝工具级 `cache_control` 或中转层拒绝 `eager_input_streaming`），网关剥离该字段重试，并在当前 isolate 按线路记住该规则。若希望首轮即预先剥离，可在「设置 → 模型与线路」填写逗号分隔的 `UPSTREAM_STRIP_TOOL_FIELDS`（工具核心字段 `name`、`description`、`input_schema`、`type` 受保护，禁止剥离）。
+- **诊断响应头** 响应附带 `x-aelios-identity`、`x-aelios-memory`、`x-aelios-provider`、`x-aelios-model` 与 `x-aelios-normalized`（已清洗的非规范字段数），实际模型与 provider 优先采用上游返回的 `cf-aig-model` / `cf-aig-provider`。
 
-本版支持 HTTP POST + SSE，没有实现 WebSocket、Responses GET/DELETE、后台任务轮询、`/responses/compact`、
-Anthropic token counting。使用这些额外端点的客户端需要后续适配；还不能声称 Claude Code / Codex 全功能兼容。
+## Hook 接口（magpie 插件用）
 
-## 自动记录与辅助请求
+当代理流量已经经过 [magpie](https://github.com/yetone/magpie) 等外部网关时，可通过以下接口实现每轮召回与按需记录，无需更改代理上游。已通过 Aelios 网关转发的代理请勿同时开启 Hook，避免重复记录。
 
-主模型对话的原始新用户文本、可见助手回复和模型发出的工具调用（tool_use / function_call 参数）进入 messages 表，供 Dream 使用，无需 Hook。thinking、工具返回不入库。Chat Completions 记录第一个 choice。像「已回她」「已发送」这种回执整句丢掉——发出去的正文在对应工具参数里。旧回执读取时也会洗掉。
-`gateway_exchanges` 保存操作状态、实际模型/Provider 和可见文本，不保存注入补丁。
+### `GET /v1/hook/identities`
 
-写代码的客户端只记说的话（助手的 `codingFilter`，默认开，`false` 关掉回到全记）。请求头自报是 Claude Code、Codex、Cline、Roo、Kilo、opencode、Aider 等（`User-Agent`、`X-Title`、`HTTP-Referer`、`originator`），或请求同时带跑命令和改文件两类工具，就算写代码，响应带 `x-aelios-coding: <依据>`。这时：用户文本里的代码块换成 `[code]`（按 CommonMark，围栏要用同一种符号、不短于开头的那行才算关上）；回复的文字边流边把代码块换成 `[code]`，所以再长的代码块也不会把后面的话挤出 8000 字的上限。回复只要调用了发消息以外的工具，这一步就只留发消息类的调用：工具名得有 send、reply、message、tts 之类的词，其余的词只能是发给谁、发到哪（user、chat、weixin、telegram 之类，MCP 的服务名不算），所以 `send_patch`、`sendKeys`、`commit_message` 都算干活；发消息参数里的代码块也换成 `[code]`。干活的工具参数不进记录，也不占 8000 字上限；留下的发消息调用另算 8000 字上限，超了记成 truncated。流式工具参数每个最多攒 64000 字。正常完成、什么都不剩的步骤不加新行，只把同一请求之前失败的那次改成完成（按主键查一行，平时不写）；失败、被截断、中途断开的立刻写入、不走队列，好让紧跟着的重试找得到。没调用工具的回复照记。召回不变，只在用户开口的那轮做，搜的词去掉了这一轮和前几轮里的代码。判断在 `src/gateway/coding.ts`。
+使用同一把客户端 API Key 发现有权访问的助手路由提示。
 
-- 同一请求重试、Queue 重复投递：稳定指纹 + D1 主键去重。
-- 更长历史中再次说相同文字：视为新消息。
-- 每个输入/输出记录最多 8000 字符，超限为 truncated，不把截断对话当作完整 Dream 来源。
-- 中断、取消、失败：不完整助手输出不进入 Dream。
-- 无 Queue 或发送失败：直接写 D1，最终错误记录日志。
-- exchanges 与 messages 共用 `MESSAGES_RETENTION_DAYS`。
+- 返回 `{"identities": [{"slug": "...", "name": "...", "mainModels": [...]}], "selection": "first_matching_main_model", "unmatched": "memory_off"}`，按配置原序排列，仅包含这些公开字段（`name` 取去空白后的显示名或 `slug`）。
+- 接口完全只读，无 SQL 写入或外部请求。缺失或无效密钥返回 `401`，MCP 密钥或无授权助手的密钥返回 `403`，配置读取失败返回 `503`，所有响应均带 `Cache-Control: private, no-store`。
 
-| 可选请求头 | 用途 |
-| --- | --- |
-| `x-aelios-session-id` | 区分会话；也读取 session_id、x-session-id、metadata.session_id |
-| `x-aelios-request-id` | 区分内容相同但有意重新生成的请求 |
-| `x-aelios-purpose: auxiliary` | 标题、压缩、内部任务：不召回，不进入 Dream |
+### `POST /v1/hook/recall` 与 `POST /v1/hook/record`
 
-没有 session ID 时，在身份与来源下按完整输入去重；两个全新会话若历史完全相同，会合并为一次输入。
-无法可靠识别未标记的机器内部任务；把杂务模型留在主模型白名单之外即可。
-
-持久化在响应结束后调度，不是在返回客户端前确认写入；运行时强制终止仍可能丢失末尾记录。
-
-## hook 接口（magpie 插件用）
-
-客户端不走 Aelios 网关、模型请求由别的网关自己发（比如 magpie 的 Aelios 插件）时，用这两个接口拿到同样的记忆。
-它们**不转发上游**，复用网关的轮次判断、召回和记录逻辑（`src/gateway/hook.ts`）。hook 召回默认不保存对话或触发 remember-now，只有显式选择记录才会存人话；现有网关仍自动记录。
-鉴权和网关同一把 Aelios API key（`Authorization: Bearer …`），请求体上限 2 MB（超了 413），两个接口都无状态。
-不传 `identity` 的模型分流只适用于 hook；网关 URL 带 slug 时仍用该助手，不带 slug 时仍用该钥匙的第一个助手。想让 GPT 和 Claude 进入不同分区，在 `/admin` 给两个助手分别配置各自的主模型；重叠匹配取配置中靠前的助手。
-
-`GET /v1/hook/identities` 用同一把 API key 读取有权助手的路由提示，无请求体：
-
-```json
-{
-  "identities": [{ "slug": "coder", "name": "Coder", "mainModels": ["*opus*", "*sonnet*"] }],
-  "selection": "first_matching_main_model",
-  "unmatched": "memory_off"
-}
-```
-
-`identities` 按配置原序，只包含 `allowedIdentities(config, auth)` 允许这把 key 使用的助手；每项只返回 `slug`、`name`、`mainModels`。`name` 是去掉首尾空白的 `assistantName`，未配置时用 slug；`mainModels` 原序复制主模型列表，保留通配符、重复项和空列表。`selection` 表示按原序选第一个匹配主模型的助手；`unmatched` 表示全部不匹配时关闭记忆，现有 hook 仍按第一个有权助手回落并返回 off。模型匹配继续使用网关已有的大小写不敏感、完整模型名或最后一个 `/` 后名称及 `*` 通配规则。
-
-只投影上述公开字段，不返回 namespace、readNamespaces、keys、prompts、settings 或 upstream。这个 GET 只读取配置，不写 SQL、不入队、不调用模型或外部 HTTP。无效或缺失 key 返回 401，MCP key 或没有有权助手的 key 返回 403，配置读取或校验失败返回 503；成功和错误响应均带 `Cache-Control: private, no-store`。
-
-公共字段（以下两个 POST 接口）：
+两个 POST 接口共用以下字段。
 
 | 字段 | 说明 |
 | --- | --- |
-| `protocol` | `chat` / `messages` / `responses`（`anthropic` 当 `messages`） |
-| `model` | 这一轮用的模型名，按助手的主模型判断；不是主模型就什么都不做 |
-| `agent` | 可空。调用方的 agent id（如 magpie 的 Claude Code 为 `claude`，以及 `codex`、`opencode`、`kilo`）。命中写代码客户端就按 `codingFilter` 只记说的话；同时带跑命令和改文件工具也算 |
-| `session` | 可空。等同网关的 `x-aelios-session-id`；空就照旧读 `body.metadata.session_id`，再空落到 `unscoped` |
-| `identity` | 可空。显式助手 slug 优先（包括插件 `routes` 选出的助手），仅允许这把 key 有权使用的助手；不填时，按配置顺序选第一个主模型匹配本轮 `model` 的有权助手；全部不匹配则回落到第一个有权助手，此时返回 `off`。无有权助手或显式助手不可用时返回 403 |
-| `body` | 请求体（可以是瘦身后的：只留 `messages`/`input`、`tools` 的名字、`metadata`），不需要带 `model` |
+| `protocol` | `chat`、`messages` 或 `responses`（`anthropic` 视同 `messages`） |
+| `model` | 本轮模型名，用于匹配助手主模型白名单 |
+| `agent` | 可选，调用方代理标识（如 `claude`、`codex`、`opencode`、`kilo`），用于触发编程对话过滤 |
+| `session` | 可选，等同 `x-aelios-session-id`，缺省依次回退 `body.metadata.session_id` 与 `unscoped` |
+| `identity` | 可选，显式指定已授权的助手 `slug`，省略时按配置顺序匹配第一个主模型命中的授权助手 |
+| `body` | 请求体（可精简为 `messages`/`input`、工具名称与 `metadata`） |
 
-`POST /v1/hook/recall` 返回（HTTP 200）：
-
-```json
-{ "memory": "injected", "patch": "……", "recall_id": "rcl_…", "remember": "none" }
-```
-
-- `memory`：`off`（非主模型）/ `skipped`（不是人说话的一轮）/ `stateful`（Responses 带 `previous_response_id`、`conversation` 或 `item_reference`；网关这里报 400，hook 只跳过）/ `empty` / `injected` / `unavailable`（召回失败，`patch` 为空，仍是 200）。
-- `recall_id` 只在真的召回时有值，其余为 `null`；`remember` 取值同 `x-aelios-remember`。
-- 判定为写代码时多一个 `coding` 字段（同 `x-aelios-coding`）。
-- 调用方把 `patch` 贴到最后一条用户消息后面。recall 请求可额外带 `record: true`，此时才当场保存用户原话并处理 remember-now。省略、`false` 或非布尔值均不保存对话、不创建 remember-now 记忆，`remember` 返回 `none`；召回仍正常工作。召回诊断和已有记忆的使用计数仍照常保存。
-- 调用方应在发送 recall 前检查敏感内容；含凭证的轮次应跳过整个 hook。只读召回也会把查询发给 Aelios。
-
-`POST /v1/hook/record` 额外字段：`reply`（该协议的非流式完整回复，可为 `null`）、`success`、`upstream_model`（可空，`reply.model` 优先）、`http_status`（可空）。
-工具步也要发：Claude Code 的最终回答常在工具步里。返回 `{ "recorded": true, "exchange_id": "gw_req_…", "completion": "complete" }`；
-非主模型 `{ "recorded": false, "reason": "off" }`，带服务端状态的 Responses `{ "recorded": false, "reason": "stateful" }`，写入失败 503 `{ "recorded": false, "reason": "unavailable" }`。
-`success: false` 或没有 `reply` 记成 failed，不进 Dream。写进队列（或无队列时直接写 D1）之后才返回。
-
-去重：exchange id 是内容哈希，包含外层请求 `model`；recall 和 record 发同一份 `body`、同一个 `session` 和 `model`，用户那句只有一行。同一会话对相同输入使用不同主模型时，两份助手回答分别记录，用户原话仍共享一行。
-`messages.source` 照旧是 `gateway:<助手>`，Dream、日记、看板不用改。要在 `/admin` 把 agent 用的模型名加进助手的主模型（或 `*`），否则两个接口都是 off。
-如果某个 agent 的上游本来就是 Aelios 网关，别再给它开插件，否则会记两遍。
-
-## Fallback 与缓存
-
-重试、跨厂商 fallback、预算与限流全部交给 CF AI Gateway（动态路由在 CF 仪表盘配置）。
-本网关一次调用一个上游，本地不做主备。
-旧 assembler、缓存断点/滚动缓存已退出对外入口。新网关不重排前缀，也不添加 prompt cache 断点：
-召回内容追加在对话末尾，各家自己的 prompt 缓存照常命中。
-顶层 `cache_control` 是 Anthropic 已支持的自动缓存字段，但部分 Vertex/代理线路仍会拒绝。
-为兼容现有线路，网关把它转换成注入前最后一个可缓存块上的显式断点；已有断点保留，TTL 冲突或超过 4 个提前返回 400。
-没有顶层缓存设置就不主动添加断点。这个转换不等于保证所有上游支持同一套特性。
-工具定义上的未知字段同理,网关按「学习」处理:某条线路 400 报 `unrecognizedProperty=<字段>`,
-剥掉该字段重试,并在本 isolate 按线路记住,之后请求预先剥除;支持该字段的线路永远学不到,不受影响。
-实测两种:Vertex 线路拒绝工具级 `cache_control`(system/user 位置正常);新版 Claude Code 会给每个工具
-带 `eager_input_streaming`,中转层和 Bedrock 之类不认,也走同一条学习路径 —— 该字段只调工具参数流式粒度,
-剥掉只损失一点延迟。一次 400 只报一个字段,客户端可能同时带多个,所以学习放在有界循环里,首轮最多每种字段多花一次往返。
-想不等这一次 400、每次先剥干净,在「设置 → 模型与线路」填 `UPSTREAM_STRIP_TOOL_FIELDS`(逗号分隔)。
-默认留空:那是按线路精确剥,只会影响真正拒绝它的上游,比一刀切剥所有 custom provider 更准。
-这个设置是自由文本,但工具的身份字段(`name`/`description`/`input_schema`/`type`)会被拒绝并记一条日志 ——
-`validateRequest` 在剥离之前,否则会拆坏工具再出站。
-响应头 `x-aelios-identity/memory/provider/model` 用于诊断；实际模型与 Provider 优先读取 `cf-aig-model/provider`。
-`x-aelios-normalized` 表示删除的非规范字段数量，Worker 日志列出字段路径，不记录被删除的值。
-
-## 验证与下一步
-
-```bash
-npm ci
-npm run verify
-npx wrangler deploy --dry-run
-```
-
-网关测试调用生产 TS 模块和实际 SQLite migrations/SQL，只替换外部 HTTP 调用。
-覆盖三协议、主模型白名单、临时召回、去重、身份隔离、辅助请求、SSE Unicode 分块、中断与 Queue 回退。
-这是本地验证，不等于已经在真实 CF、Claude Code 或 Codex 中跑过端到端会话。
-
-后续联调优先级：真实三协议线路 → Claude thinking beta 透传 → 客户端工具续轮 → 辅助请求识别 → 更多协议端点。
-每完成一个可验证阶段即提交开发分支，不等整轮联调完成。main 不合并、不部署。
-
-## 官方依据（2026-09-06 核对）
-
-- [CF REST 三协议](https://developers.cloudflare.com/ai-gateway/usage/rest-api/)
-- [Unified Billing](https://developers.cloudflare.com/ai-gateway/features/unified-billing/)
-- [CF Dynamic Routes](https://developers.cloudflare.com/ai-gateway/features/dynamic-routing/usage/)
-- [Anthropic preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking)
-
-旧 `/admin/gateway` 页面已废弃，仅跳转到 `/admin`；网关设置与召回记录共用主面板的助手选择和 Token。
-
-## 记忆来源、更正与遗忘
-
-`remember` 可以只传正文。想指向某次对话时，可选传 `source_message_ids`。服务端只接受写入空间里仍保留的消息 ID。原有 `type`、`authored_by`、`fact_key`、`replaces` 继续使用。需要追一条记忆的来历时，用 `read_diary(memory_id)`。原地编辑的旧版仍从 `GET /v1/memories/:id/revisions` 读取。
-
-| 想知道什么 | 看哪里 | 如何解读 |
-| --- | --- | --- |
-| 谁保存了这条内容 | `provenance.creation_mode`、`recording_actor` | 经 MCP 显式保存为 `agent_explicit`。网关收到用户的明确记忆指令为 `user_explicit`。Dream 和导入有各自的来源。审核后的版本记录审核渠道。 |
-| 能核实到哪一级身份 | `credential_namespace`、`claimed_author` | 固定空间凭据可以证明调用获准写哪个空间。署名由调用者填写。同一凭据可以供多个客户端使用，因此单凭署名无法认证具体模型。 |
-| 哪句话支持这条记忆 | `source_message_ids`、`attributed_actor`、`evidence_relation` | 这些字段分别说明证据位置、发言角色，以及正文是转述还是解释。即使能核对原话，发言所指的现实事件仍需另行核实。 |
-| 整理时还看过什么 | `provenance.inputs`、`completeness` | 其中 `inputs` 是引用证据，`context_refs` 是只用于审计的同批消息、上下文记忆和背景日记。一个背景材料可能影响措辞，却不足以支持结论。覆盖程度为 `partial` 或 `unknown`。旧行可没有 `provenance`。 |
-
-Dream 沿用原来的抽取批次和审核队列。新抽取要把角色和引文对应到实际收到的消息。缺少支持消息、把提问当决定、把工具参数当作助手发言等候选会被舍弃或留待审核。经网关新记录的助手回合标明是否混入工具内容。旧网关回合缺少这个标记时，对原话的判断会更保守。亲笔与候选冲突时交给人工判断。手动更正仍可用 `replaces` 建立替换关系，原地编辑沿用最近 20 版的保留上限。模型依然可能误读否定、转述或讽刺，尤其在长消息中。
-
-主动 `recall` 处理亲笔、用户决定和演变问题时，会使用对应的来源与历史。精确措辞见 `evidence.messages` 的角色、时间和文字。`available` 表示返回了完整的保留片段，`partial` 表示有来源缺失或片段被裁剪，`unavailable` 表示此次没有可供核对的原话。普通命中仍可作为线索。这里核对的是当前可读的 `messages`，消息归档保有独立的 `search_chat` 入口。未送达网关或记录钩子的对话没有原话可供抽取。
-
-后台每句原话旁有两个动作。“删除这句”（`DELETE /v1/raw/:id`，旧客户端的默认行为）清理该句、归档副本和全文索引，并移除来源列表里的 ID；已经整理出的记忆保留。“撤回这句及其已知衍生记忆”（`?mode=withdraw`）还会立墓碑，沿实际引用追踪衍生记录，先在 D1 下架，再清理向量和触发器，响应里的 `withdrawn_memories` 列出被隐藏的记忆。日记暂时隐藏并清空旧正文，交给现有日记补写任务使用剩余原文重建。两种动作都不会因为某条记忆的整理过程“读过”这句（`context_refs`）而撤下它；助手亲笔写的记忆也不随原话撤回。
-
-没有 `provenance` 的旧行（0023 之前由 Dream、审核或抽取写入）把整批消息都记进了 `source_message_ids`，列出某个 ID 只说明模型读过它。撤回时，只列一个 ID 的旧行按引用处理；列了多个 ID 的旧行只有在正文抄录了被撤回原话（忽略空白、标点和大小写后连续 12 字，较短的原话须整句出现）时才隐藏，其余保留、去掉这个 ID，并在 `unverified_memories` 中列出，供人工查看。MCP `forget` 默认只归档指定记忆、撤下指向它的待审候选；`permanent: true` 走撤回并硬删指定条目。索引服务出错时可以重试撤回。
-
-遗忘覆盖范围取决于保存下来的关联。已经折叠且失去来源映射的历史摘要、手工 handoff、单独保存的珍贵片段和 Notebook，不能凭内容相似自动追删。已有导出、备份、请求日志、诊断记录、外部客户端缓存及已经发送给模型的内容也各有独立的生命周期。运行中的外部请求或旧汇总任务可能持有先前读出的内容。逻辑下架不提供密码学擦除保证。现有整理任务可用剩余材料重新生成摘要，缺少依据时允许留空。
-
-**迁移与回退。** 新 Worker 需要按编号应用增量迁移，包括 `0023_memory_provenance.sql` 和 `0024_dream_evidence.sql`。它给现有表增加可空字段，并建立 ID 撤销表、索引、视图与写入保护。旧行原样可读，无需全库重建向量。若主动召回质量或耗时回退，在现有设置里关闭 `RECALL_PROVENANCE_SELECTION` 可恢复旧的排序与主动证据查询行为。保留迁移和撤销记录；回退整个 Worker 会同时回退应用层的遗忘过滤。
-
-Preview upgrades also apply 0025. A preview digest sometimes copied the entire batch into its diary citation list. Where that list cannot be distinguished from a diary citing every line, the old text and IDs stay in storage for audit. The diary is hidden until backfill can rebuild it from surviving messages.
-
-Migration 0026 also removes similarity-only predecessor edges from identifiable preview approvals and revisions. The version chain still records which entry they replaced.
-
-Migration 0027 narrows the pre-provenance edge in `memory_derivations` to rows that list a single message, so withdrawing an unrelated line from an old Dream batch no longer hides the other memories made from that batch.
-
-### Current user decisions
-
-`CURRENT_STATE_PROJECTION` (switch, defaults to off; accepts `on`, `true`, `1`) enables scoped user decisions during Dream and annotates active recall and gateway recall. Dream proposes a `decision:user/<context>/<property>` key. The write checks the captured user speech, verbatim quote, selected value and timestamp before committing. An older observation is stored as a revision (`late_evidence`). Withdrawing the current decision's source leaves earlier versions historical. Recall preserves an authored note's wording, with the date attached to outdated wording in the gateway. Scoped decision records are read-only in the admin memory page and REST `PATCH`; update them by withdrawing the source message or recording a new user decision.
-
-The setting defaults to off. `RECALL_PROVENANCE_SELECTION=false` also disables projection. P1 uses the existing schema. Hard deletion returns `withdrawn_memories` in the response, an array of other affected memory IDs.
-
-### Rolling memory
-
-Daytime Dream is the `ROLLING_DREAM` switch in the gateway settings, on by default (`off`, `false`, `0` or `no` turn it off). While it is off, nightly Dream processes every conversation as before. The five `ROLLING_*` tuning settings fold under the switch on the settings page. On the Workers Free plan, daytime calls use the same 10,000 daily neurons as the nightly run. The Dream page reports whether it is on, the inbox backlog, recent windows, call counts and failed windows.
-
-It uses Clef-flash for triage and `DREAM_MODEL` for windows selected for extraction. A `chatgpt/...` Dream route uses the same plan allowance for daytime and nightly calls.
-
-Earlier releases had a read-only `shadow` value for comparing drafts with nightly outputs. It is gone. Migration `0029_drop_rolling_shadow.sql` removes its columns, draft events and navigation state, and turns a saved `shadow` into `false`, since shadow never wrote anything and must not start writing because the new default is on.
-
-Migration `0028_rolling_inbox.sql` adds an inbox for newly recorded messages. Older messages follow the nightly cursor. New windows follow insertion order and open at 10 messages or 8,000 characters by default. A single oversized message is split at code point boundaries. Rolling runs through the existing queue. Each successful Clef-flash classification gates the Dream model, and explicit decision cues also trigger a model check. The raw message remains searchable within its usual retention period.
-
-When it is on, window events enter the existing candidate queue. Continuations can extend a same-day pending episode with additional citations. A continuation of approved derived memory can propose an update, and `CURRENT_STATE_PROJECTION` enables sufficiently grounded user decisions to use the existing version chain.
-
-Nightly and daytime Dream share the inbox completion records. Nightly extracts the remaining messages and the journal reads the full retained day. Turn the switch off to resume nightly extraction of new messages. Completed windows keep their checkpoints and nightly can settle a live commit that started before the switch. Keep the additive migration in place.
+- **`POST /v1/hook/recall`** 返回 HTTP `200` 及 `{"memory": "injected" | "empty" | "off" | "skipped" | "stateful" | "unavailable", "patch": "...", "recall_id": "...", "remember": "..."}`，调用方将 `patch` 附加到最后一条用户消息末尾。默认只做召回，仅在显式传入 `record: true` 时当场保存用户原话并处理即时记忆。调用方应在发送前自行拦截含敏感凭证的轮次。
+- **`POST /v1/hook/record`** 额外接收 `reply`（非流式完整回复，可为 `null`）、`success`、`upstream_model` 与 `http_status`，写队列或直写 D1 后返回 `{"recorded": true, "exchange_id": "gw_req_...", "completion": "complete"}`（非主模型返回 `off`，带服务端状态的 Responses 返回 `stateful`，写入失败返回 `503`）。工具回合也需上报。`exchange_id` 基于请求内容与外层 `model` 哈希生成，同一轮 `recall` 与 `record` 自动去重，写入 `messages.source = "gateway:<slug>"`。
