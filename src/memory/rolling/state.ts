@@ -1,6 +1,5 @@
 import { readCursor } from "../../db/retention";
 import type { Env } from "../../types";
-import type { RollingLane } from "./settings";
 import { codePointLength } from "./window";
 
 export interface RollingState {
@@ -25,8 +24,8 @@ export interface StateDelta {
 
 const EMPTY: RollingState = { episodes: [], open: [], changes: [] };
 
-export function rollingStateName(namespace: string, lane: RollingLane): string {
-  return (lane === "shadow" ? "rolling_shadow_state:" : "rolling_state:") + namespace;
+export function rollingStateName(namespace: string): string {
+  return `rolling_state:${namespace}`;
 }
 
 function validState(value: unknown): RollingState {
@@ -42,10 +41,9 @@ function validState(value: unknown): RollingState {
 
 export async function loadRollingState(
   env: Env,
-  namespace: string,
-  lane: RollingLane
+  namespace: string
 ): Promise<{ name: string; value: string | null; state: RollingState }> {
-  const name = rollingStateName(namespace, lane);
+  const name = rollingStateName(namespace);
   const value = await readCursor(env.DB, name);
   const state = validState(JSON.parse(value ?? "null"));
   const ids = [...new Set([...state.episodes, ...state.open].flatMap((item) => item.evidence_ids))];

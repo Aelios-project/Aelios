@@ -1,0 +1,16 @@
+-- Daytime Dream is a single on/off switch now. The read-only "shadow" comparison mode is gone,
+-- together with its separate progress columns, its draft events and its navigation state.
+-- A saved ROLLING_DREAM=shadow is cleared, which reads as off; the code also reads it as off.
+DELETE FROM memory_events WHERE event_type='rolling_shadow';
+DELETE FROM processing_cursors WHERE name GLOB 'rolling_shadow_state:*';
+UPDATE gateway_config SET config_json=json_remove(config_json,'$.settings.ROLLING_DREAM')
+  WHERE json_valid(config_json) AND json_extract(config_json,'$.settings.ROLLING_DREAM')='shadow';
+
+DROP INDEX idx_rolling_inbox_shadow_open;
+DROP INDEX idx_rolling_inbox_shadow_claim;
+ALTER TABLE rolling_inbox DROP COLUMN shadow_window_key;
+ALTER TABLE rolling_inbox DROP COLUMN shadow_claimed_at;
+ALTER TABLE rolling_inbox DROP COLUMN shadow_attempts;
+ALTER TABLE rolling_inbox DROP COLUMN shadow_progress;
+ALTER TABLE rolling_inbox DROP COLUMN shadow_done_at;
+ALTER TABLE rolling_inbox DROP COLUMN shadow_error;

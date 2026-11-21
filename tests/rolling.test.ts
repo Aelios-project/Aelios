@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { ADMIN_HTML } from "../src/api/admin/ui";
 import { handleDreamHarvest, handleDreamStatus } from "../src/api/dream";
 import { cleanRawMessage, invalidateKnownInputs } from "../src/db/v2/revocation";
-import { validateSettings } from "../src/gateway/settings";
+import { SETTINGS } from "../src/gateway/settings";
 import { runDailyMemoryDigest } from "../src/memory/dream/orchestrator";
 import { insertMessageFts } from "../src/memory/fts";
 import { searchQuotes } from "../src/memory/quotes";
@@ -15,6 +15,7 @@ import { claimRollingWindow } from "../src/memory/rolling/inbox";
 import { claimNightlyExtraction, releaseNightlyExtraction } from "../src/memory/rolling/nightly";
 import { rollingExplicitWrites, rollingRecallHits, type RollingPacket } from "../src/memory/rolling/payload";
 import { runRollingWindow } from "../src/memory/rolling/runner";
+import { isDaytimeDreamOn } from "../src/memory/rolling/settings";
 import { loadRollingState } from "../src/memory/rolling/state";
 import { getRollingDreamStatus } from "../src/memory/rolling/stats";
 import { clefTriage, ROLLING_CLEF_MODEL } from "../src/memory/rolling/triage/clef";
@@ -28,7 +29,7 @@ import { sqliteFixture } from "./support/sqlite";
 
 const novel = { async classify() { return NOVEL; } };
 const ordinary = { async classify() { return ORDINARY; } };
-const shadowEnv = (db: D1Database): Env => ({ DB: db, ROLLING_DREAM: "shadow", ROLLING_WINDOW_MESSAGES: "2" });
+const daytimeEnv = (db: D1Database): Env => ({ DB: db, ROLLING_DREAM: "on", ROLLING_WINDOW_MESSAGES: "2" });
 const digestReply = { title: "Synthetic day", summary: "One synthetic conversation.", memories_to_add: [] };
 
 function quoteFirst(packet: RollingPacket) {
@@ -56,6 +57,34 @@ test("0028 captures new turns, leaves old rows alone, and never reuses a deleted
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM messages").get()?.n, 3);
 });
 
+test("0029 drops the shadow mode: its columns, draft events, navigation state and saved setting", (t) => {
+  const sqlite = new DatabaseSync(":memory:");
+  t.after(() => sqlite.close());
+  const files = readdirSync("migrations").filter(name => name.endsWith(".sql")).sort();
+  for (const file of files.filter(name => name < "0029")) sqlite.exec(readFileSync(`migrations/${file}`, "utf8"));
+  const settings = { settings: { ROLLING_DREAM: "shadow", DREAM_TIME_ZONE: "UTC" } };
+  sqlite.prepare("INSERT INTO gateway_config(id,config_json,updated_at) VALUES(1,?,?)").run(JSON.stringify(settings), SYNTHETIC_AT);
+  sqlite.prepare("INSERT INTO memory_events(id,namespace,event_type,payload_json,created_at) VALUES('evt_s','default','rolling_shadow','{}',?),('evt_w','default','rolling_window','{}',?)")
+    .run(SYNTHETIC_AT, SYNTHETIC_AT);
+  sqlite.prepare("INSERT INTO processing_cursors(name,value,updated_at) VALUES('rolling_shadow_state:default','{}',?),('rolling_state:default','{}',?)")
+    .run(SYNTHETIC_AT, SYNTHETIC_AT);
+  for (const file of files.filter(name => name >= "0029")) sqlite.exec(readFileSync(`migrations/${file}`, "utf8"));
+  const columns = sqlite.prepare("SELECT name FROM pragma_table_info('rolling_inbox')").all().map(row => String(row.name));
+  assert.deepEqual(columns.filter(name => name.startsWith("shadow_")), []);
+  assert.deepEqual(sqlite.prepare("SELECT id FROM memory_events").all().map(row => row.id), ["evt_w"]);
+  assert.deepEqual(sqlite.prepare("SELECT name FROM processing_cursors").all().map(row => row.name), ["rolling_state:default"]);
+  const saved = JSON.parse(String(sqlite.prepare("SELECT config_json FROM gateway_config").get()?.config_json));
+  assert.deepEqual(saved.settings, { DREAM_TIME_ZONE: "UTC" });
+});
+
+test("daytime Dream is one switch; an older saved shadow value reads as off", () => {
+  for (const on of ["on", "true", "1", "yes", " ON "]) assert.equal(isDaytimeDreamOn({ ROLLING_DREAM: on }), true, on);
+  for (const off of ["off", "false", "0", "shadow", "", undefined]) assert.equal(isDaytimeDreamOn({ ROLLING_DREAM: off }), false, String(off));
+  const spec = SETTINGS.find(setting => setting.name === "ROLLING_DREAM");
+  assert.equal(spec?.kind, "switch");
+  assert.equal(spec?.defaultOn, false);
+});
+
 test("window thresholds respect message and code point budgets, including an oversized head", () => {
   const sizes = [2, 2, 2, 12].map(chars => ({ chars }));
   assert.deepEqual(pickWindow(sizes, { messages: 2, chars: 8 }), sizes.slice(0, 2));
@@ -65,11 +94,11 @@ test("window thresholds respect message and code point budgets, including an ove
   assert.equal(codePointLength("a🧪中"), 3);
 });
 
-test("R12/P2-a shadow reads actual gateway and ingest turns with no memory tools or candidate writes", async (t) => {
+test("R12/P2-a daytime reads actual gateway and ingest turns and writes only review candidates", async (t) => {
   const { sqlite, db } = sqliteFixture(t);
   const sent: QueueMessage[] = [];
   const env = {
-    ...shadowEnv(db),
+    ...daytimeEnv(db),
     GATEWAY_CONFIG: JSON.stringify({ version: 3, identities: [
       { slug: "lab", namespace: "default", keys: ["CHATBOX_API_KEY"], models: ["synth-*"] }
     ] }),
@@ -93,15 +122,14 @@ test("R12/P2-a shadow reads actual gateway and ingest turns with no memory tools
   } } });
   assert.equal(result.extracted, true);
   assert.deepEqual(seen, ["user_test", "gw_test:assistant"]);
-  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM memory_candidates").get()?.n, 0);
+  assert.deepEqual(sqlite.prepare("SELECT source_message_ids FROM memory_candidates").all().map(row => row.source_message_ids), ['["user_test"]']);
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM memories").get()?.n, 0);
-  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM rolling_inbox WHERE done_at IS NOT NULL").get()?.n, 0);
-  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM rolling_inbox WHERE shadow_done_at IS NOT NULL").get()?.n, 2);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM rolling_inbox WHERE done_at IS NOT NULL").get()?.n, 2);
 });
 
 test("R10/R11/R15/R19/R20 payload isolates recalled context and checks actual citations, not claimed evidence", async (t) => {
   const { sqlite, db } = sqliteFixture(t);
-  const env = shadowEnv(db);
+  const env = daytimeEnv(db);
   insertLine(sqlite, "a", "We opened the prism.", { at: "2026-11-17T10:05:00.000Z" });
   insertLine(sqlite, "b", "Good to see you.", { at: SYNTHETIC_AT });
   const add = sqlite.prepare("INSERT INTO memories(id,namespace,type,content,provenance,created_at,updated_at,source_message_ids) VALUES(?,?,'note',?,?,?,?,?)");
@@ -115,7 +143,7 @@ test("R10/R11/R15/R19/R20 payload isolates recalled context and checks actual ci
   ];
   sqlite.prepare("INSERT INTO memory_events(id,namespace,event_type,payload_json,created_at) VALUES('fake','default','recall_explain',?,?)")
     .run(JSON.stringify({ items }), "2026-11-17T10:04:00.000Z");
-  const { claim } = await claimRollingWindow(env, "default", "shadow");
+  const { claim } = await claimRollingWindow(env, "default");
   assert.ok(claim);
   const recall = await rollingRecallHits(env, "default", claim.rows);
   assert.deepEqual(recall.map(({ id, hit_count, relation }) => ({ id, hit_count, relation })), [{ id: "recall", hit_count: 1, relation: "seen_only" }]);
@@ -141,7 +169,7 @@ test("R10/R11/R15/R19/R20 payload isolates recalled context and checks actual ci
 
 test("R13/R14/R21 low triage preserves explicit writing and searchable original words", async (t) => {
   const { sqlite, db } = sqliteFixture(t);
-  const env = shadowEnv(db);
+  const env = daytimeEnv(db);
   const content = "We have a synthetic nickname Beryl.";
   insertLine(sqlite, "a", content);
   insertLine(sqlite, "b", "Good evening.");
@@ -156,7 +184,7 @@ test("R13/R14/R21 low triage preserves explicit writing and searchable original 
 
 test("R16/R17 a Unicode oversized message retries only the failed part and keeps the same model decision", async (t) => {
   const { sqlite, db } = sqliteFixture(t);
-  const env = { ...shadowEnv(db), ROLLING_WINDOW_CHARS: "4" };
+  const env = { ...daytimeEnv(db), ROLLING_WINDOW_CHARS: "4" };
   insertLine(sqlite, "long", "甲🧪乙丙丁戊🙂己庚辛");
   const parts: string[] = [];
   let triageCalls = 0;
@@ -183,12 +211,12 @@ test("R16/R17 a Unicode oversized message retries only the failed part and keeps
   assert.equal(triageCalls, 1);
   const { recent_windows: [stats] } = await getRollingDreamStatus(env, "default");
   assert.deepEqual([stats.attempts, stats.clef_calls, stats.extractor_calls, stats.event_count], [2, 1, 4, 3]);
-  assert.deepEqual((await loadRollingState(env, "default", "shadow")).state.episodes[0].evidence_ids, ["long"]);
+  assert.deepEqual((await loadRollingState(env, "default")).state.episodes[0].evidence_ids, ["long"]);
 });
 
 test("P2-c a removed source cannot be republished by inference finishing after withdrawal", async (t) => {
   const { sqlite, db } = sqliteFixture(t);
-  const env = shadowEnv(db);
+  const env = daytimeEnv(db);
   insertLine(sqlite, "a", "First.");
   insertLine(sqlite, "b", "Second.");
   let notifyStarted = () => {};
@@ -206,17 +234,18 @@ test("P2-c a removed source cannot be republished by inference finishing after w
   finish();
   assert.equal((await running).reason, "lease_changed");
   assert.equal(sqlite.prepare("SELECT message_id FROM rolling_inbox WHERE message_id='a'").get(), undefined);
-  assert.equal(sqlite.prepare("SELECT id FROM memory_events WHERE event_type='rolling_shadow'").get(), undefined);
+  assert.equal(sqlite.prepare("SELECT id FROM memory_events WHERE event_type='rolling_draft'").get(), undefined);
+  assert.equal(sqlite.prepare("SELECT id FROM memory_candidates").get(), undefined);
   await runRollingWindow(env, "default", { triage: novel, extractor: { async extract(packet) { return quoteFirst(packet); } } });
-  assert.equal((await loadRollingState(env, "default", "shadow")).state.episodes.length, 1);
+  assert.equal((await loadRollingState(env, "default")).state.episodes.length, 1);
   await invalidateKnownInputs(env, { namespace: "default", id: "b" }, "message");
-  assert.equal(sqlite.prepare("SELECT id FROM memory_events WHERE event_type='rolling_shadow'").get(), undefined);
-  assert.equal((await loadRollingState(env, "default", "shadow")).value, null);
+  assert.equal(sqlite.prepare("SELECT id FROM memory_candidates WHERE status='pending'").get(), undefined);
+  assert.equal((await loadRollingState(env, "default")).value, null);
 });
 
 test("D4/D5 uses one Clef request; a decision cue bypasses unavailable triage without creating a decision", async (t) => {
   const { sqlite, db } = sqliteFixture(t);
-  const env = shadowEnv(db);
+  const env = daytimeEnv(db);
   const seen: unknown[] = [];
   env.AI = { async run(model: string, input: unknown) {
     assert.equal(model, ROLLING_CLEF_MODEL);
@@ -240,23 +269,22 @@ test("D4/D5 uses one Clef request; a decision cue bypasses unavailable triage wi
 test("P2-d 200 synthetic chat lines sustain one episode across windows with a later turn", async (t) => {
   const { sqlite, db } = sqliteFixture(t);
   seedAffectionateDialogue(sqlite);
-  const env = { DB: db, ROLLING_DREAM: "shadow" };
+  const env = { DB: db, ROLLING_DREAM: "on", DREAM_TIME_ZONE: "UTC" };
   const adapters = {
     triage: { async classify(packet: RollingPacket) { return episodeProposal(packet).events.length ? NOVEL : ORDINARY; } },
     extractor: { async extract(packet: RollingPacket) { return episodeProposal(packet); } }
   };
   for (let index = 0; index < 20; index += 1) assert.equal((await runRollingWindow(env, "default", adapters)).ran, true);
   assert.equal((await runRollingWindow(env, "default", adapters)).ran, false);
-  const rows = sqlite.prepare("SELECT payload_json FROM memory_events WHERE event_type='rolling_shadow' ORDER BY rowid").all();
-  const proposed = rows.flatMap(row => JSON.parse(String(row.payload_json)).events);
-  assert.deepEqual(proposed.map(event => [event.op, event.episode_key, event.source_message_ids]), [
-    ["new", "moon-post", ["chat_0"]], ["continuation", "moon-post", ["chat_180"]]
+  const rows = sqlite.prepare("SELECT provenance,source_message_ids FROM memory_candidates").all();
+  assert.deepEqual(rows.map(row => [JSON.parse(String(row.provenance)).episode_key, JSON.parse(String(row.source_message_ids))]), [
+    ["moon-post", ["chat_0", "chat_180"]]
   ]);
 });
 
-test("A1 nightly owns off/shadow captures only after applying, and force may rerun nightly-owned rows", async (t) => {
+test("A1 nightly owns captures made while daytime Dream is off, and force may rerun nightly-owned rows", async (t) => {
   const { sqlite, db } = sqliteFixture(t);
-  const env = { ...shadowEnv(db), ROLLING_DREAM: "off", DREAM_TIME_ZONE: "UTC", DREAM_STRATEGY: "review" };
+  const env = { ...daytimeEnv(db), ROLLING_DREAM: "off", DREAM_TIME_ZONE: "UTC", DREAM_STRATEGY: "review" };
   insertLine(sqlite, "legacy", "Line before migration.");
   sqlite.exec("DELETE FROM rolling_inbox WHERE message_id='legacy'");
   insertLine(sqlite, "a", "First real line.");
@@ -269,12 +297,12 @@ test("A1 nightly owns off/shadow captures only after applying, and force may rer
     return { response: { memories: [] } };
   } } as Env["AI"];
   assert.equal((await runRollingWindow(env, "default")).reason, "off");
-  assert.equal((await runRollingWindow({ ...env, ROLLING_DREAM: "shadow" }, "default", { triage: ordinary })).ran, true);
+  assert.equal((await runRollingWindow({ ...env, ROLLING_DREAM: "shadow" }, "default", { triage: ordinary })).reason, "off");
   assert.equal((await runDailyMemoryDigest(env, "default", { dateLabel: SYNTHETIC_DAY })).ran, true);
   assert.match(extracts[0], /First real line/);
   assert.match(extracts[0], /Line before migration/);
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM rolling_inbox WHERE done_at IS NOT NULL AND window_key LIKE 'nightly:%'").get()?.n, 2);
-  assert.equal((await runRollingWindow({ ...env, ROLLING_DREAM: "shadow" }, "default")).ran, false);
+  assert.equal((await runRollingWindow({ ...env, ROLLING_DREAM: "on" }, "default")).ran, false);
   assert.equal((await runDailyMemoryDigest(env, "default", { dateLabel: SYNTHETIC_DAY, force: true })).ran, true);
   assert.equal(extracts.length, 2);
   insertLine(sqlite, "late", "Arrived after that day already finished.", { at: "2026-11-17T09:01:00.000Z" });
@@ -286,10 +314,10 @@ test("A1 nightly owns off/shadow captures only after applying, and force may rer
 
 test("A1 nightly skips a fresh live claim and can take over an expired lease without advancing over it", async (t) => {
   const { sqlite, db } = sqliteFixture(t);
-  const env = shadowEnv(db);
+  const env = daytimeEnv(db);
   insertLine(sqlite, "a", "First.");
   insertLine(sqlite, "b", "Second.");
-  const claim = await claimRollingWindow(env, "default", "on");
+  const claim = await claimRollingWindow(env, "default");
   assert.ok(claim.claim);
   const rows = sqlite.prepare("SELECT * FROM messages ORDER BY id").all() as unknown as MessageRecord[];
   const run = { dateLabel: SYNTHETIC_DAY, dreamRunId: "test" };
@@ -297,14 +325,14 @@ test("A1 nightly skips a fresh live claim and can take over an expired lease wit
   sqlite.exec("UPDATE rolling_inbox SET claimed_at='2000-01-01T00:00:00.000Z'");
   const nightly = await claimNightlyExtraction(env, "default", rows, run, false);
   assert.deepEqual([...nightly.messageIds], ["a", "b"]);
-  assert.equal(await claimRollingWindow(env, "default", "on").then(result => result.claim), undefined);
+  assert.equal(await claimRollingWindow(env, "default").then(result => result.claim), undefined);
   await releaseNightlyExtraction(db, "default", nightly);
-  assert.ok((await claimRollingWindow(env, "default", "on")).claim);
+  assert.ok((await claimRollingWindow(env, "default")).claim);
 });
 
 test("late nightly batches extract candidates without replacing an existing diary draft", async (t) => {
   const { sqlite, db } = sqliteFixture(t);
-  const env = { ...shadowEnv(db), ROLLING_DREAM: "off", DREAM_TIME_ZONE: "UTC", DREAM_STRATEGY: "upsert" };
+  const env = { ...daytimeEnv(db), ROLLING_DREAM: "off", DREAM_TIME_ZONE: "UTC", DREAM_STRATEGY: "upsert" };
   insertLine(sqlite, "early", "The observatory opened.");
   env.AI = { async run(_model: string, input: { messages?: Array<{ content: string }> }) {
     const [system, body] = input.messages ?? [];
@@ -333,7 +361,7 @@ test("late nightly batches extract candidates without replacing an existing diar
 
 test("a short rolling lease cannot cut off an in-progress nightly batch", async (t) => {
   const { sqlite, db } = sqliteFixture(t);
-  const env = { ...shadowEnv(db), ROLLING_CLAIM_TTL_MINUTES: "1" };
+  const env = { ...daytimeEnv(db), ROLLING_CLAIM_TTL_MINUTES: "1" };
   insertLine(sqlite, "one", "First line.");
   insertLine(sqlite, "two", "Second line.");
   const rows = sqlite.prepare("SELECT * FROM messages ORDER BY id").all() as unknown as MessageRecord[];
@@ -342,29 +370,28 @@ test("a short rolling lease cannot cut off an in-progress nightly batch", async 
   sqlite.prepare("UPDATE rolling_inbox SET claimed_at=?").run(new Date(Date.now() - 5 * 60_000).toISOString());
   const other = { dateLabel: SYNTHETIC_DAY, dreamRunId: "other" };
   assert.equal((await claimNightlyExtraction(env, "default", rows, other, false)).blocked, true);
-  assert.equal((await claimRollingWindow(env, "default", "on")).claim, undefined);
+  assert.equal((await claimRollingWindow(env, "default")).claim, undefined);
   sqlite.exec("UPDATE rolling_inbox SET claimed_at='2000-01-01T00:00:00.000Z'");
   assert.equal((await claimNightlyExtraction(env, "default", rows, other, false)).leasedIds.length, 2);
 });
 
-test("A3 settings and existing Dream endpoints report modes, retry failures, and comparisons", async (t) => {
+test("A3 the Dream status endpoint reports the switch, backlog and failed windows; harvest has no comparison", async (t) => {
   const { sqlite, db } = sqliteFixture(t);
-  const env = { ...shadowEnv(db), CHATBOX_API_KEY: "synthetic-secret", DREAM_TIME_ZONE: "UTC", ROLLING_MAX_ATTEMPTS: "1" };
+  const env = { ...daytimeEnv(db), CHATBOX_API_KEY: "synthetic-secret", DREAM_TIME_ZONE: "UTC", ROLLING_MAX_ATTEMPTS: "1" };
   insertLine(sqlite, "a", "First.");
   insertLine(sqlite, "b", "Second.");
   await runRollingWindow(env, "default", { triage: { async classify() { return null; } } });
-  assert.deepEqual(validateSettings({ ROLLING_DREAM: "shadow" }), { ROLLING_DREAM: "shadow" });
-  assert.deepEqual(validateSettings({ ROLLING_DREAM: "on" }), { ROLLING_DREAM: "on" });
-  assert.throws(() => validateSettings({ ROLLING_DREAM: "invalid" }), /off, shadow, on/);
-  assert.match(ADMIN_HTML, /settingOption\(item\)/);
-  assert.match(ADMIN_HTML, /What rolling would write/);
+  assert.doesNotMatch(ADMIN_HTML, /settingOption|What rolling would write|<select :id="'setting-'/);
+  assert.match(ADMIN_HTML, /Daytime Dream/);
   const req = (path: string) => new Request(`https://synthetic.invalid${path}`, { headers: { authorization: "Bearer synthetic-secret" } });
   const status = await handleDreamStatus(req("/v1/dream/status"), env);
   assert.equal(status.status, 200);
-  assert.equal((await status.json() as { data: { rolling: { failed_windows: Array<{ error: string }> } } }).data.rolling.failed_windows[0].error, "triage_failed");
+  const { rolling } = (await status.json() as { data: { rolling: { on: boolean; failed_windows: Array<{ error: string }> } } }).data;
+  assert.equal(rolling.on, true);
+  assert.equal(rolling.failed_windows[0].error, "triage_failed");
   const harvest = await handleDreamHarvest(req(`/admin/dream/harvest?date=${SYNTHETIC_DAY}`), env);
   assert.equal(harvest.status, 200);
-  assert.deepEqual((await harvest.json() as { data: { rolling: unknown } }).data.rolling, { shadow: [], nightly: [] });
+  assert.equal("rolling" in (await harvest.json() as { data: object }).data, false);
   await cleanRawMessage(db, "default", "a");
   assert.equal(sqlite.prepare("SELECT 1 FROM rolling_inbox WHERE message_id='a'").get(), undefined);
 });

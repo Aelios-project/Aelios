@@ -23,10 +23,6 @@ export const ADMIN_SCRIPT_SETTINGS = String.raw`    async init() {
       const own = this.flagValue(item.value);
       return own === null ? this.switchBaseline(item) : own;
     },
-    settingOption(item) {
-      const options = item.options || [];
-      return [item.value, item.deployed, item.defaultValue].find(value => options.some(option => option.value === value)) || '';
-    },
     // 拨回默认就清掉覆盖，跟默认不一样才存 true/false，点了就存。
     toggleSetting(item) {
       const next = !this.settingOn(item);

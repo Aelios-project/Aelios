@@ -1,5 +1,5 @@
 import { I, t } from "../helpers";
-import { rollingHarvestPanel, rollingStatusPanel } from "../../rolling";
+import { rollingStatusPanel } from "../../rolling";
 
 export const ADMIN_TAB_DREAM = `      <!-- ===== 夜间整理 ===== -->
       <section x-show="savedApiKey.trim() && page === 'dream'" class="page">
@@ -212,7 +212,6 @@ export const ADMIN_TAB_DREAM = `      <!-- ===== 夜间整理 ===== -->
               </div>
             </div>
           </div>
-          ${rollingHarvestPanel(t)}
         </section>
       </section>
 `;

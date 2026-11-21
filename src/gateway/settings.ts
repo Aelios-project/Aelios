@@ -5,18 +5,10 @@ import type { Env } from "../types";
 // 不一样就存 "true"/"false" (所有开关的读法都认这两个)。common 的几项放在设置页最上面「常用」里。
 // labelEn / hintEn / SETTING_GROUPS_EN 是英文版设置页用的；name、group 和中文 label/hint 不动，别处按它们认。
 // upstream 的几项画在「模型与上游」里上游地址下面，不在分组里重复。
-export interface SettingOption {
-  value: string;
-  label: string;
-  labelEn: string;
-  hint?: string;
-  hintEn?: string;
-  disabled?: boolean;
-}
 export interface SettingSpec {
   name: string; label: string; hint?: string; group: string;
   labelEn?: string; hintEn?: string;
-  kind?: "switch" | "select"; defaultOn?: boolean; defaultValue?: string; options?: SettingOption[]; common?: boolean; upstream?: boolean;
+  kind?: "switch"; defaultOn?: boolean; common?: boolean; upstream?: boolean;
 }
 /** The Worker's placement hint: a cloud region the way Cloudflare names it, provider:region. */
 export const PLACEMENT_REGION_RE = /^(aws|gcp|azure):[a-z0-9-]{2,40}$/i;
@@ -74,36 +66,13 @@ export const SETTINGS: SettingSpec[] = [
   {
     group: "Dream 与日记",
     name: "ROLLING_DREAM",
-    label: "滚动整理模式",
-    labelEn: "Rolling memory mode",
-    hint: "默认关闭。影子模式把滚动整理拟写的事件与夜间产出并排展示。",
-    hintEn: "Off by default. Shadow shows rolling drafts alongside nightly Dream outputs.",
-    kind: "select",
-    defaultValue: "off",
-    common: true,
-    options: [
-      {
-        value: "off",
-        label: "关闭 (off)",
-        labelEn: "Off",
-        hint: "保持现有夜间 Dream 流程，不触发滚动窗口任务。",
-        hintEn: "Keep nightly Dream only; do not queue rolling windows."
-      },
-      {
-        value: "shadow",
-        label: "影子对比 (shadow)",
-        labelEn: "Shadow (read-only)",
-        hint: "每窗调用 Clef-flash 分诊，通过的窗口用 DREAM_MODEL 抽取。若配置 chatgpt/...，影子抽取与夜间 Dream 共用套餐额度。夜间照常运行，影子结果供对比。",
-        hintEn: "Each window uses Clef-flash triage. Selected windows call DREAM_MODEL. A chatgpt/... route shares plan usage with nightly Dream. Nightly Dream runs as usual and shadow drafts are available for comparison."
-      },
-      {
-        value: "on",
-        label: "开启 (on)",
-        labelEn: "On",
-        hint: "按窗口增量整理并写入候选或明确决定，夜间接手剩余消息，日记照常读全天。",
-        hintEn: "Commit rolling outputs and let nightly Dream handle remaining messages. The journal reads the full day."
-      }
-    ]
+    label: "白天整理",
+    labelEn: "Daytime Dream",
+    hint: "默认关。打开后，白天每攒够一段对话（默认 10 条或 8000 字），先用 Clef-flash 判断里面有没有值得记的，有就用 Dream 模型写成待审候选或明确决定；夜里只处理白天没整理到的消息，日记照常读全天。会调用模型：Dream 模型填的是 chatgpt/... 时，白天和夜里共用套餐额度",
+    hintEn: "Off by default. When on, each stretch of conversation (10 messages or 8,000 characters by default) is checked with Clef-flash during the day, and stretches worth keeping are written by the Dream model as review candidates or explicit decisions. Nightly Dream only handles what the day left, and the journal still reads the whole day. This calls models: with a chatgpt/... Dream model, daytime and nightly calls share the plan allowance.",
+    kind: "switch",
+    defaultOn: false,
+    common: true
   },
   {
     group: "Dream 与日记",
@@ -223,13 +192,6 @@ export function validateSettings(value: unknown): Record<string, string> {
     if (name === "CHAT_ARCHIVE_RETENTION_DAYS" && (!/^\d+$/.test(trimmed) || Number(trimmed) > 36_500)) {
       throw new Error(`${name}: enter a whole number from 0 to 36500`);
     }
-    const spec = SETTINGS.find(s => s.name === name);
-    if (spec?.kind === "select" && spec.options?.length) {
-      const available = spec.options.filter(option => !option.disabled);
-      if (!available.some(option => option.value === trimmed)) {
-        throw new Error(`${name}: must be one of ${available.map(option => option.value).join(", ")}`);
-      }
-    }
     out[name] = trimmed;
   }
   return out;
@@ -252,7 +214,6 @@ export function describeSettings(env: Env, settings: Record<string, string>) {
       name: spec.name, label: spec.label, hint: spec.hint || "",
       labelEn: spec.labelEn || "", hintEn: spec.hintEn || "",
       ...(spec.kind === "switch" ? { kind: spec.kind, defaultOn: spec.defaultOn === true } : {}),
-      ...(spec.kind === "select" ? { kind: spec.kind, defaultValue: spec.defaultValue || "", options: spec.options || [] } : {}),
       ...(spec.common ? { common: true } : {}),
       ...(spec.upstream ? { upstream: true } : {}),
       value: settings[spec.name] || "",

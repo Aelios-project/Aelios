@@ -2,13 +2,13 @@ import type { Env, MessageRecord } from "../../types";
 import { isExplicitDecisionText } from "../currentState/decisionCues";
 import { DreamModelTimeoutError } from "../dream/modelCall";
 import { groundWindowProposal } from "./apply";
-import { finishRollingWindow, releaseInterruptedWindow, saveRollingDraft, saveRollingProgress, saveShadowPart } from "./checkpoint";
+import { finishRollingWindow, releaseInterruptedWindow, saveRollingDraft, saveRollingProgress } from "./checkpoint";
 import { dreamWindowExtractor, type WindowExtractor } from "./extract";
 import { claimRollingWindow, type RollingClaim } from "./inbox";
 import { commitRollingDrafts } from "./live";
 import { rollingExplicitWrites, rollingRecallHits, type RollingPacket } from "./payload";
-import { activeRollingLane, rollingSettings, type RollingLane } from "./settings";
-import { applyStateDelta, loadRollingState } from "./state";
+import { isDaytimeDreamOn, rollingSettings } from "./settings";
+import { loadRollingState } from "./state";
 import { needsExtraction, type WindowTriage } from "./triage";
 import { clefTriage } from "./triage/clef";
 import { splitMessage } from "./window";
@@ -29,9 +29,9 @@ interface RollingAdapters {
 class RollingStageError extends Error {}
 
 async function preparePacket(env: Env, claim: RollingClaim, adapters: RollingAdapters): Promise<RollingPacket | null> {
-  const { namespace, lane, key, rows, progress } = claim;
+  const { namespace, key, rows, progress } = claim;
   const [snapshot, recallHits, explicitWrites] = await Promise.all([
-    loadRollingState(env, namespace, lane),
+    loadRollingState(env, namespace),
     rollingRecallHits(env, namespace, rows),
     rollingExplicitWrites(env, namespace, rows)
   ]);
@@ -61,26 +61,23 @@ async function preparePacket(env: Env, claim: RollingClaim, adapters: RollingAda
 }
 
 async function processParts(env: Env, claim: RollingClaim, packet: RollingPacket, extractor: WindowExtractor): Promise<void> {
-  const { namespace, lane, key, rows, progress } = claim;
+  const { namespace, rows, progress } = claim;
   if (!progress.extract) return;
   const parts = rows.length === 1 ? splitMessage(rows[0], progress.chars).map(row => [row]) : [rows];
   for (const [index, messages] of parts.entries()) {
     const partKey = String(index);
     if (progress.completed.includes(partKey)) continue;
-    const snapshot = await loadRollingState(env, namespace, lane);
+    const snapshot = await loadRollingState(env, namespace);
     const input = { ...packet, rolling_state: snapshot.state, messages };
     progress.extractorCalls += 1;
     const proposal = await extractor.extract(input);
     if (!proposal) throw new RollingStageError("extraction_failed");
     const grounded = groundWindowProposal(input, proposal);
-    const state = applyStateDelta(snapshot.state, grounded.state_delta, `${key}:${partKey}`, rollingSettings(env).stateChars);
     const count = grounded.events.filter(event => event.op !== "no_op").length;
     progress.eventCount += count;
     progress.completed.push(partKey);
     try {
-      const saved = lane === "shadow"
-        ? await saveShadowPart(env.DB, claim, index, grounded, { ...snapshot, state })
-        : await saveRollingDraft(env.DB, claim, { part: index, grounded, recall_ids: packet.recall_hits.map(hit => hit.id) });
+      const saved = await saveRollingDraft(env.DB, claim, { part: index, grounded, recall_ids: packet.recall_hits.map(hit => hit.id) });
       if (!saved) {
         throw new RollingStageError("lease_changed");
       }
@@ -97,13 +94,12 @@ export async function runRollingWindow(
   namespace: string,
   adapters: RollingAdapters = {}
 ): Promise<RollingRunResult> {
-  const lane = activeRollingLane(env);
-  if (!lane) return { ran: false, extracted: false, reason: "off" };
-  return runLane(env, namespace, lane, adapters);
+  if (!isDaytimeDreamOn(env)) return { ran: false, extracted: false, reason: "off" };
+  return runWindow(env, namespace, adapters);
 }
 
-async function runLane(env: Env, namespace: string, lane: RollingLane, adapters: RollingAdapters, resumeKey?: string): Promise<RollingRunResult> {
-  const { claim, retryAfter } = await claimRollingWindow(env, namespace, lane, resumeKey);
+async function runWindow(env: Env, namespace: string, adapters: RollingAdapters, resumeKey?: string): Promise<RollingRunResult> {
+  const { claim, retryAfter } = await claimRollingWindow(env, namespace, resumeKey);
   if (!claim) return { ran: false, extracted: false, reason: retryAfter ? "busy" : "no_window", retryAfter };
   const { key, attempts, progress } = claim;
   const maxAttempts = rollingSettings(env).maxAttempts;
@@ -113,7 +109,7 @@ async function runLane(env: Env, namespace: string, lane: RollingLane, adapters:
       const packet = await preparePacket(env, claim, adapters);
       if (!packet) throw new RollingStageError("lease_changed");
       await processParts(env, claim, packet, adapters.extractor ?? dreamWindowExtractor(env, namespace, progress.model));
-      if (lane === "on" && progress.extract) {
+      if (progress.extract) {
         progress.committing = true;
         if (!await saveRollingProgress(env.DB, claim)) throw new RollingStageError("lease_changed");
       }
@@ -143,6 +139,6 @@ export async function recoverRollingCommit(env: Env, namespace: string, messages
       AND json_extract(progress,'$.committing')=1 AND message_id IN (SELECT value FROM json_each(?))
     LIMIT 1`).bind(namespace, JSON.stringify(messages.map(message => message.id))).first<{ window_key: string }>();
   if (!row) return false;
-  const result = await runLane(env, namespace, "on", {}, row.window_key);
+  const result = await runWindow(env, namespace, {}, row.window_key);
   return result.ran;
 }

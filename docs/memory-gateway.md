@@ -350,12 +350,14 @@ The setting defaults to off. `RECALL_PROVENANCE_SELECTION=false` also disables p
 
 ### Rolling memory
 
-`ROLLING_DREAM` defaults to `off`. Turn on `shadow` in the gateway settings to see draft events beside nightly outputs on the Dream page. Shadow records its own progress, and nightly Dream still processes the same conversations. The Dream page reports inbox backlog, recent windows, call counts, and failed windows.
+Daytime Dream is the `ROLLING_DREAM` switch in the gateway settings, off by default (`on`, `true`, `1` turn it on). While it is off, nightly Dream processes every conversation as before. The Dream page reports whether it is on, the inbox backlog, recent windows, call counts and failed windows.
 
-Shadow uses Clef-flash for triage and `DREAM_MODEL` for windows selected for extraction. A `chatgpt/...` Dream route uses the same plan allowance for shadow and nightly calls.
+It uses Clef-flash for triage and `DREAM_MODEL` for windows selected for extraction. A `chatgpt/...` Dream route uses the same plan allowance for daytime and nightly calls.
+
+Earlier releases had a read-only `shadow` value for comparing drafts with nightly outputs. It is gone: a saved `shadow` reads as off, and migration `0029_drop_rolling_shadow.sql` removes its columns, draft events, navigation state and saved setting.
 
 Migration `0028_rolling_inbox.sql` adds an inbox for newly recorded messages. Older messages follow the nightly cursor. New windows follow insertion order and open at 10 messages or 8,000 characters by default. A single oversized message is split at code point boundaries. Rolling runs through the existing queue. Each successful Clef-flash classification gates the Dream model, and explicit decision cues also trigger a model check. The raw message remains searchable within its usual retention period.
 
-With `on`, rolling events enter the existing candidate queue. Continuations can extend a same-day pending episode with additional citations. A continuation of approved derived memory can propose an update, and `CURRENT_STATE_PROJECTION` enables sufficiently grounded user decisions to use the existing version chain.
+When it is on, window events enter the existing candidate queue. Continuations can extend a same-day pending episode with additional citations. A continuation of approved derived memory can propose an update, and `CURRENT_STATE_PROJECTION` enables sufficiently grounded user decisions to use the existing version chain.
 
-Nightly Dream and live rolling share the inbox completion records. Nightly extracts the remaining messages and the journal reads the full retained day. Set `ROLLING_DREAM=off` to resume nightly extraction of new messages. Completed windows keep their checkpoints and nightly can settle a live commit that started before the switch. Keep the additive migration in place.
+Nightly and daytime Dream share the inbox completion records. Nightly extracts the remaining messages and the journal reads the full retained day. Turn the switch off to resume nightly extraction of new messages. Completed windows keep their checkpoints and nightly can settle a live commit that started before the switch. Keep the additive migration in place.

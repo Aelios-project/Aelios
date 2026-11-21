@@ -305,7 +305,7 @@ With the clef review switched off, `memory_candidates` and `memory_review` are l
 
 ### Dream execution and failure status
 
-Rolling memory defaults to off. Choose **Shadow** to compare drafts and nightly outputs, or **On** to write through the existing memory candidate queue as windows finish. See [rolling memory](docs/memory-gateway.md#rolling-memory).
+**Daytime Dream** is a switch in Settings and is off by default. When on, conversation is sorted during the day in windows of about ten messages: Clef-flash decides whether a window holds anything worth keeping, the Dream model writes it into the memory candidate queue, and the nightly run handles whatever the day left. See [daytime Dream](docs/memory-gateway.md#rolling-memory).
 
 The admin Nightly page submits non-dry manual Dream runs to the existing durable `MEMORY_QUEUE`. Acceptance returns a run ID immediately; after acceptance, closing the browser does not cancel the queued work. The panel polls status every five seconds and can find the task again after a reload. Queue batches contain one message so several expensive Dream jobs do not share one invocation's execution budget.
 
