@@ -2,6 +2,7 @@ import { callOpenAICompat } from "../proxy/openaiAdapter";
 import type { Env, MessageRecord, OpenAIChatRequest, OpenAIChatResponse } from "../types";
 import { extractJsonObject, readStringArray } from "../utils/parse";
 import { sanitizeMemoryContent } from "../utils/sanitize";
+import { dreamOutputLimit } from "./dreamEnv";
 
 export interface ExtractedMemory {
   type: string;
@@ -175,7 +176,7 @@ export async function extractMemoriesFromMessages(
         content: buildExtractionPrompt(messages)
       }
     ],
-    max_tokens: 900,
+    ...dreamOutputLimit(env, model),
     stream: false
   };
 

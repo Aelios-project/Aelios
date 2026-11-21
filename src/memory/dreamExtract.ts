@@ -7,15 +7,12 @@ import type { Env, MessageRecord, OpenAIChatRequest, OpenAIChatResponse } from "
 import { clampScore, extractJsonObject, readString, readStringArray } from "../utils/parse";
 import { CHAT_MATERIAL_RULES, clipMiddle, escapeChatTags, formatChatMaterial } from "./chatMaterial";
 import { addDaysToDateLabel } from "./dreamDates";
-import { readDreamTimeZoneFromEnv } from "./dreamEnv";
+import { DEFAULT_DREAM_MODEL, dreamOutputLimit, readDreamTimeZoneFromEnv } from "./dreamEnv";
 import { clampMemoryType } from "./canonicalTypes";
 import { nameOnlyRule, speakerLabel } from "./speakers";
 import type { ExtractedMemory } from "./extract";
 
 // Same budget as the digest call: a smaller extract cap truncated the candidate list (and any reasoning tokens) of a full batch.
-const DEFAULT_DREAM_EXTRACT_MAX_TOKENS = 3000;
-const MAX_DREAM_EXTRACT_MAX_TOKENS = 8000;
-const DEFAULT_WORKERS_AI_DREAM_MODEL = "workers-ai/@cf/openai/gpt-oss-120b";
 
 export interface DreamExtractModelResult {
   memories: ExtractedMemory[];
@@ -36,18 +33,12 @@ function readUsage(usage: OpenAIChatResponse["usage"]): { input: number; output:
   return { input, output };
 }
 
-function readPositiveInt(value: unknown, fallback: number, max: number): number {
-  const parsed = typeof value === "string" ? Number(value) : typeof value === "number" ? value : fallback;
-  const numeric = Number.isFinite(parsed) ? parsed : fallback;
-  return Math.min(Math.max(Math.floor(numeric), 1), max);
-}
-
 function readDreamExtractModel(env: Env): string {
   return (
     env.DREAM_MODEL?.trim() ||
     env.DAILY_DIGEST_MODEL?.trim() ||
     env.SUMMARY_MODEL?.trim() ||
-    DEFAULT_WORKERS_AI_DREAM_MODEL
+    DEFAULT_DREAM_MODEL
   );
 }
 
@@ -237,7 +228,7 @@ async function callDreamExtractModel(
       { role: "system", content: "You are a strict JSON generator. Output valid JSON only." },
       { role: "user", content: [decisionInstructions, buildDreamExtractPrompt(messages, existingFactKeys, speakers, background)].filter(Boolean).join("\n") }
     ],
-    max_tokens: readPositiveInt(env.DREAM_MAX_TOKENS, DEFAULT_DREAM_EXTRACT_MAX_TOKENS, MAX_DREAM_EXTRACT_MAX_TOKENS),
+    ...dreamOutputLimit(env, model),
     response_format: { type: "json_object" },
     stream: false
   };

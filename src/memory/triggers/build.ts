@@ -15,6 +15,7 @@ import { newId } from "../../utils/ids";
 import type { Env, OpenAIChatRequest, OpenAIChatResponse } from "../../types";
 import { buildTriggerPrompt, parseTriggerResponse, type TriggerDraft } from "./prompt";
 import { upsertTriggerVectors, deleteTriggerVectors } from "./store";
+import { dreamOutputLimit } from "../dreamEnv";
 
 const BUILD_MEMORY_LIMIT = 120;
 const TRIGGERS_PER_MEMORY = 4;
@@ -49,7 +50,7 @@ export async function draftTriggersForMemory(
         })
       }
     ],
-    max_tokens: 800
+    ...dreamOutputLimit(env, model)
   };
 
   try {

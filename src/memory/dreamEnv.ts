@@ -1,4 +1,5 @@
 import type { Env } from "../types";
+import { isWorkersAiModel } from "../proxy/openaiAdapter";
 import { readPositiveInt, readString } from "./dreamUtils";
 
 const DEFAULT_MAX_MESSAGES = 40;
@@ -26,7 +27,10 @@ export function readFirstEnvValue(...values: unknown[]): unknown {
   return undefined;
 }
 
-const DEFAULT_DREAM_MODEL = "workers-ai/@cf/openai/gpt-oss-120b";
+/** Default for nightly and daytime Dream, the journal, the weekly and monthly summaries and chat imports. */
+export const DEFAULT_DREAM_MODEL = "workers-ai/@cf/zai-org/glm-4.7-flash";
+const WORKERS_AI_OUTPUT_LIMIT = 8000;
+const MAX_OUTPUT_LIMIT = 65_536;
 
 export function readDreamModel(env: Env): string | null {
   return (
@@ -47,8 +51,21 @@ export function readDreamMaxMessages(env: Env): number {
   );
 }
 
-export function readDreamMaxTokens(env: Env): number {
-  return readPositiveInt(readFirstEnvValue(env.DREAM_MAX_TOKENS, env.DAILY_DIGEST_MAX_TOKENS), 3000, 8000);
+/** The output limit set in Settings, or undefined when none is set. */
+export function readDreamMaxTokens(env: Env): number | undefined {
+  const raw = readFirstEnvValue(env.DREAM_MAX_TOKENS, env.DAILY_DIGEST_MAX_TOKENS);
+  return readString(raw) ? readPositiveInt(raw, WORKERS_AI_OUTPUT_LIMIT, MAX_OUTPUT_LIMIT) : undefined;
+}
+
+/**
+ * The only length parameter a background call sends. Unset, it sends none and the model decides how
+ * long to think and answer, so any route works. Workers AI is the exception: models such as gpt-oss
+ * default to 256 tokens there, which cuts the JSON short, so they get a roomy limit instead.
+ */
+export function dreamOutputLimit(env: Env, model: string): { max_tokens?: number } {
+  const set = readDreamMaxTokens(env);
+  if (set !== undefined) return { max_tokens: set };
+  return isWorkersAiModel(model) ? { max_tokens: WORKERS_AI_OUTPUT_LIMIT } : {};
 }
 
 export function readDreamMemoryContextLimit(env: Env): number {

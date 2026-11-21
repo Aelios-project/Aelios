@@ -15,6 +15,7 @@ import { callOpenAICompat } from "../proxy/openaiAdapter";
 import type { Env, MemoryRelType, MemoryRelationRow, OpenAIChatRequest, OpenAIChatResponse } from "../types";
 import { createEmbedding } from "./embedding";
 import { isRecallableMemory } from "./search";
+import { DEFAULT_DREAM_MODEL, dreamOutputLimit } from "./dreamEnv";
 
 const RELATION_JUDGE_LIMIT = 200;
 const NEIGHBOR_TOP_K = 8;
@@ -222,7 +223,7 @@ export interface RelationBuildStats {
 }
 
 function readDreamModel(env: Env): string {
-  return env.DREAM_MODEL || env.DAILY_DIGEST_MODEL || env.SUMMARY_MODEL || "workers-ai/@cf/openai/gpt-oss-120b";
+  return env.DREAM_MODEL || env.DAILY_DIGEST_MODEL || env.SUMMARY_MODEL || DEFAULT_DREAM_MODEL;
 }
 
 function extractJsonArray(text: string): unknown[] {
@@ -270,7 +271,7 @@ async function judgeRelationsForPair(
       { role: "system", content: "Output JSON only." },
       { role: "user", content: prompt }
     ],
-    max_tokens: 600
+    ...dreamOutputLimit(env, model)
   };
 
   try {
@@ -453,7 +454,7 @@ async function judgeSemanticConflict(
       { role: "system", content: "Output JSON only." },
       { role: "user", content: prompt }
     ],
-    max_tokens: 80
+    ...dreamOutputLimit(env, model)
   };
 
   try {

@@ -4,6 +4,11 @@ import { callChatGptChat, isChatGptModel } from "../chatgpt/internal";
 import { ACCOUNT_DEFAULT_GATEWAY, resolveGatewayId } from "../gateway/upstream";
 import type { Env, OpenAIChatRequest, OpenAIChatResponse } from "../types";
 
+/** Workers AI models run through the AI binding; their own output default can be as low as 256 tokens. */
+export function isWorkersAiModel(model: string): boolean {
+  return workersAiModelName(model) !== null;
+}
+
 function workersAiModelName(model: string): string | null {
   const normalized = model.trim();
   if (normalized.startsWith("workers-ai/")) return normalized.slice("workers-ai/".length);

@@ -6,6 +6,7 @@
  * Callers keep their own JSON parsing, result normalization and model-name
  * resolution. Throws after the final retry.
  */
+import { dreamOutputLimit } from "../memory/dreamEnv";
 import { callOpenAICompat } from "../proxy/openaiAdapter";
 import type { Env, OpenAIChatRequest, OpenAIChatResponse } from "../types";
 
@@ -16,7 +17,6 @@ const DEFAULT_SYSTEM_PROMPT = "You are a strict JSON generator. Output valid JSO
 export interface ModelCallRequest {
   model: string;
   prompt: string;
-  maxTokens?: number;
   backoffMs?: number[]; // default [2000, 8000]; pass [] for a single attempt
   systemPrompt?: string; // default JSON-generator system prompt
   logPrefix?: string; // default "model_call"
@@ -99,10 +99,17 @@ export async function callModelWithRetry(env: Env, req: ModelCallRequest): Promi
       { role: "system", content: req.systemPrompt ?? DEFAULT_SYSTEM_PROMPT },
       { role: "user", content: req.prompt }
     ],
-    ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
+    ...dreamOutputLimit(env, req.model),
     response_format: { type: "json_object" },
     stream: false
   };
+
+  console.log(`${logPrefix}: calling model`, {
+    ...req.logMeta,
+    model: request.model,
+    promptChars: req.prompt.length,
+    maxTokens: request.max_tokens
+  });
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     if (attempt > 0) {

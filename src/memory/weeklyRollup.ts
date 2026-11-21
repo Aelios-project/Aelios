@@ -15,13 +15,12 @@ import {
   getDateLabelsLookback,
   parseDateLabel
 } from "./dreamDates";
-import { readDreamTimeZoneFromEnv } from "./dreamEnv";
+import { DEFAULT_DREAM_MODEL, readDreamTimeZoneFromEnv } from "./dreamEnv";
 import { extractJsonObject, readString } from "../utils/parse";
 import { formatDateLabel } from "../utils/time";
 import { loadSpeakersForNamespace, rollupSpeakerRule, type DreamSpeakers } from "./speakers";
 
 const DEFAULT_TIME_ZONE = "Asia/Singapore";
-const DEFAULT_DREAM_MODEL = "workers-ai/@cf/openai/gpt-oss-120b";
 const MAX_WEEKS_PER_RUN = 2;
 
 export interface WeeklyRollupWeekDetail {
@@ -83,12 +82,6 @@ function shouldDeleteDailies(env: Env): boolean {
 
 function readRollupModel(env: Env): string {
   return readModelName(env, ["DREAM_MODEL", "DAILY_DIGEST_MODEL", "SUMMARY_MODEL"], DEFAULT_DREAM_MODEL);
-}
-
-function readRollupMaxTokens(env: Env): number {
-  const parsed = Number(env.DREAM_MAX_TOKENS || env.DAILY_DIGEST_MAX_TOKENS || 3000);
-  const numeric = Number.isFinite(parsed) ? parsed : 3000;
-  return Math.min(Math.max(Math.floor(numeric), 1), 8000);
 }
 
 function formatTodayDateLabel(timeZone: string, now = new Date()): string {
@@ -193,25 +186,15 @@ async function callWeeklyRollupModel(
   meta: { week: string; dayCount: number }
 ): Promise<WeeklyRollupModelCallResult> {
   const model = readRollupModel(env);
-  const maxTokens = readRollupMaxTokens(env);
-
   const startedAt = Date.now();
-  console.log("weekly_rollup: calling model", {
-    week: meta.week,
-    model,
-    dayCount: meta.dayCount,
-    promptChars: prompt.length,
-    maxTokens
-  });
 
   let text: string;
   try {
     text = await callModelWithRetry(env, {
       model,
       prompt,
-      maxTokens,
       logPrefix: "weekly_rollup",
-      logMeta: { week: meta.week }
+      logMeta: meta
     });
   } catch (error) {
     return {

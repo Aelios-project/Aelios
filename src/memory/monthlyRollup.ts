@@ -12,14 +12,13 @@ import {
   addDaysToDateLabel,
   getDateLabelsLookback
 } from "./dreamDates";
-import { readDreamTimeZoneFromEnv } from "./dreamEnv";
+import { DEFAULT_DREAM_MODEL, readDreamTimeZoneFromEnv } from "./dreamEnv";
 import { getMondayOfIsoWeek } from "./weeklyRollup";
 import { extractJsonObject, readString } from "../utils/parse";
 import { formatDateLabel } from "../utils/time";
 import { loadSpeakersForNamespace, rollupSpeakerRule, type DreamSpeakers } from "./speakers";
 
 const DEFAULT_TIME_ZONE = "Asia/Shanghai";
-const DEFAULT_DREAM_MODEL = "workers-ai/@cf/openai/gpt-oss-120b";
 const MAX_MONTHS_PER_RUN = 2;
 const ROLLUP_AGE_DAYS = 35;
 
@@ -67,12 +66,6 @@ function isMonthlyRollupEnabled(env: Env): boolean {
 
 function readRollupModel(env: Env): string {
   return readModelName(env, ["DIARY_MODEL", "DREAM_MODEL"], DEFAULT_DREAM_MODEL);
-}
-
-function readRollupMaxTokens(env: Env): number {
-  const parsed = Number(env.DREAM_MAX_TOKENS || env.DAILY_DIGEST_MAX_TOKENS || 3000);
-  const numeric = Number.isFinite(parsed) ? parsed : 3000;
-  return Math.min(Math.max(Math.floor(numeric), 1), 8000);
 }
 
 function formatTodayDateLabel(timeZone: string, now = new Date()): string {
@@ -151,25 +144,15 @@ async function callMonthlyRollupModel(
   meta: { month: string; weekCount: number }
 ): Promise<MonthlyRollupModelCallResult> {
   const model = readRollupModel(env);
-  const maxTokens = readRollupMaxTokens(env);
-
   const startedAt = Date.now();
-  console.log("monthly_rollup: calling model", {
-    month: meta.month,
-    model,
-    weekCount: meta.weekCount,
-    promptChars: prompt.length,
-    maxTokens
-  });
 
   let text: string;
   try {
     text = await callModelWithRetry(env, {
       model,
       prompt,
-      maxTokens,
       logPrefix: "monthly_rollup",
-      logMeta: { month: meta.month }
+      logMeta: meta
     });
   } catch (error) {
     return {

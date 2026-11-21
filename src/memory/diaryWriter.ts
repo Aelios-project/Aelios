@@ -7,7 +7,7 @@ import {
   getTargetDigestDateLabel,
   readDailyCursor
 } from "./dreamDates";
-import { readDreamTimeZoneFromEnv } from "./dreamEnv";
+import { DEFAULT_DREAM_MODEL, readDreamTimeZoneFromEnv } from "./dreamEnv";
 import { readDreamCursorValue } from "./dailyDigest";
 import { getIsoWeekLabelForDateLabel } from "./weeklyRollup";
 import { extractJsonObject, readString, readStringArray } from "../utils/parse";
@@ -16,7 +16,6 @@ import { diarySpeakerRules, loadSpeakersForNamespace, speakerLabel, type DreamSp
 import { CHAT_MATERIAL_RULES, formatChatMaterial } from "./chatMaterial";
 import { readPositiveInt } from "./dreamUtils";
 
-const DEFAULT_DREAM_MODEL = "workers-ai/@cf/openai/gpt-oss-120b";
 const MAX_MESSAGES = 200;
 const HALF_MESSAGES = 100;
 
@@ -81,12 +80,6 @@ function isDiaryWriterEnabled(env: Env): boolean {
 
 function readDiaryModel(env: Env): string {
   return readModelName(env, ["DIARY_MODEL", "DREAM_MODEL", "DAILY_DIGEST_MODEL"], DEFAULT_DREAM_MODEL);
-}
-
-function readDiaryMaxTokens(env: Env): number {
-  const parsed = Number(env.DREAM_MAX_TOKENS || env.DAILY_DIGEST_MAX_TOKENS || 3000);
-  const numeric = Number.isFinite(parsed) ? parsed : 3000;
-  return Math.min(Math.max(Math.floor(numeric), 1), 8000);
 }
 
 export function readDiarySegmentSize(env: Env): number {
@@ -378,26 +371,15 @@ async function callDiaryModel<T>(
   normalize: (value: unknown) => T | null
 ): Promise<DiaryModelCallResult<T>> {
   const model = readDiaryModel(env);
-  const maxTokens = readDiaryMaxTokens(env);
-
   const startedAt = Date.now();
-  console.log("diary_writer: calling model", {
-    date: meta.dateLabel,
-    step: meta.step,
-    model,
-    messageCount: meta.messageCount,
-    promptChars: prompt.length,
-    maxTokens
-  });
 
   let text: string;
   try {
     text = await callModelWithRetry(env, {
       model,
       prompt,
-      maxTokens,
       logPrefix: "diary_writer",
-      logMeta: { date: meta.dateLabel, step: meta.step }
+      logMeta: { date: meta.dateLabel, step: meta.step, messageCount: meta.messageCount }
     });
   } catch (error) {
     return {

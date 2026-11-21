@@ -97,13 +97,14 @@ test("the extraction call gets the same output budget as the digest, not a lower
   const seen: unknown[] = [];
   const { env } = fixture(t, input => { seen.push(input.max_tokens); return { response: '{"memories":[]}' }; });
   const input = { namespace: "default", messages: messages(1), speakers: null };
-  env.DREAM_MAX_TOKENS = "8000";
+  env.DREAM_MAX_TOKENS = "12000";
   await extractDreamMemoriesFromMessages(env, input);
   delete env.DREAM_MAX_TOKENS;
   await extractDreamMemoriesFromMessages(env, input);
   env.DREAM_MAX_TOKENS = "99999";
   await extractDreamMemoriesFromMessages(env, input);
-  assert.deepEqual(seen, [8000, 3000, 8000]);
+  // Unset on Workers AI: a roomy 8000 instead of the model's own 256-token default.
+  assert.deepEqual(seen, [12000, 8000, 65536]);
 });
 
 test("extract failure halves BOTH stages, retaining the unprocessed suffix", async (t) => {
