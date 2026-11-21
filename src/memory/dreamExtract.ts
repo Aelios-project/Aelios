@@ -9,7 +9,7 @@ import { CHAT_MATERIAL_RULES, clipMiddle, escapeChatTags, formatChatMaterial } f
 import { addDaysToDateLabel } from "./dreamDates";
 import { readDreamTimeZoneFromEnv } from "./dreamEnv";
 import { clampMemoryType } from "./canonicalTypes";
-import { speakerLabel } from "./speakers";
+import { nameOnlyRule, speakerLabel } from "./speakers";
 import type { ExtractedMemory } from "./extract";
 
 // Same budget as the digest call: a smaller extract cap truncated the candidate list (and any reasoning tokens) of a full batch.
@@ -104,7 +104,7 @@ function speakerWritingRules(speakers: DreamSpeakers | null): string[] {
   return [
     `- Speakers: the user is ${speakers.userName}, and the assistant is ${speakers.assistantName}. The transcript below labels turns with these names.`,
     `- Record a fact about ${speakers.userName} only when ${speakers.userName} explicitly stated, confirmed, or consistently demonstrated it.`,
-    `- Refer to both people strictly by name: "${speakers.userName}" and "${speakers.assistantName}". Never use generic labels like user/assistant, and do not substitute first/second-person pronouns for their names.`,
+    `- ${nameOnlyRule(speakers)}`,
     `- Example: "${speakers.userName} decided to sell the car in September as originally planned." For ongoing assistant commitments, write "${speakers.assistantName} should ...".`
   ];
 }
@@ -155,8 +155,9 @@ export function buildDreamExtractPrompt(
     : [];
 
   return [
-    "You are Aelios's nightly memory extractor. Your job is to read the conversation, recognize what truly matters for long-term continuity, and distill it into clear, human, ready-to-use memories.",
-    "Write every memory's content in the same language as the conversation. Write with genuine warmth and human texture rather than cold clinical logs, while staying strictly faithful to what was actually said.",
+    "You are Aelios's nightly memory extractor. Your job is to read the conversation, recognize what truly matters for long-term continuity, and distill it into accurate, specific, ready-to-use memories.",
+    "Write every memory's content strictly in the user's own language, determined only from the user's messages (ignore the assistant's replies; if the user mixes languages, use the language the user uses most).",
+    "Prioritize factual accuracy and grounding: keep every memory concrete and faithful to the transcript, and never add emotions, details, or interpretations absent from what was actually said.",
     "All extracted items enter the review queue and are never written directly.",
     "Output valid JSON only, with no markdown fences, no commentary, and no reasoning.",
     "",
@@ -175,7 +176,7 @@ export function buildDreamExtractPrompt(
     "- State the subject and relevant time clearly; preserve negations, conditions, and planned vs. completed status. Never treat a tool call as a completed real-world outcome or a plan as a past event.",
     "- Never include hashes, message IDs, or transport envelopes in content; put message IDs only in source_message_ids.",
     "- Factual entries (fact/decision/habit): keep content to 1-2 natural, well-crafted sentences.",
-    "- Emotional and relational entries (relationship/boundary/meaningful events): 3-5 sentences are welcome so you can preserve warmth, emotional nuance, and memorable phrasing — embed short verbatim quotes using single quotes or corner brackets (avoid unescaped double quotes for JSON safety).",
+    "- Emotional and relational entries (relationship/boundary/meaningful events): 3-5 sentences are welcome when needed to preserve specific context and memorable phrasing directly from the transcript — embed short verbatim quotes using single quotes or corner brackets (avoid unescaped double quotes for JSON safety).",
     "- type must be one of these 8 values only: fact, event, preference, relationship, boundary, habit, decision, note. Never output project, world_fact, commitment, etc.; map project updates to fact, promises/decisions to decision, and habits to habit.",
     "- Assign a stable lowercase ASCII fact_key for durable facts, e.g. preference:answer-style, boundary:no-system-records, decision:sell-car-2026-09.",
     "- Temporary plans or passing intentions are not durable facts: distill the lasting fact behind them or skip them.",
@@ -188,7 +189,7 @@ export function buildDreamExtractPrompt(
     "- Handle intimate content matter-of-factly: no judgment, no censorship, no euphemisms, faithful to the original wording.",
     "",
     "Volume control:",
-    "- Usually emit 0-8 memories per batch. Fewer, sharper, warmer memories beat noisy ones.",
+    "- Usually emit 0-8 memories per batch. Fewer, sharper, well-grounded memories beat noisy ones.",
     `- If the batch is purely engineering, small talk, or transient chatter, output ${JSON.stringify({ memories: [] })} — returning an empty list is completely valid.`,
     ...factKeySection,
     "",

@@ -23,7 +23,7 @@ export const MEMORY_GUIDE = [
   "- Start of every conversation: call wake_up before replying so you arrive already remembering who they are and what is going on in their life.",
   "- Whenever the conversation touches a person, place, plan, preference, past decision, or shared history: call recall first rather than guessing or asking them to repeat themselves.",
   "- Whenever something worth carrying forward comes up (a new preference, plan, decision, boundary, or correction): call remember right away. For moments you never want faded or summarized away, use keep_moment. For nicknames, inside jokes, or private shorthand, use learn_word.",
-  "- When they ask you to drop something or correct a wrong memory: call forget right away.",
+  "- When they ask you to forget or drop something: call forget right away. To correct or update a wrong memory with new facts, always call remember with replaces so the new version takes effect and the old version stays as history.",
   "- For living working notes you maintain across sessions (like progress on an ongoing project): use notebook, one named page per topic. Read a page before rewriting it.",
   "- Before switching clients or closing a session that needs seamless pickup: use handoff to leave your next self a concise, warm continuity note. Read it first and pass its revision when writing. The latest letter is returned only on wake_up and is never auto-injected.",
   "- Before relying on exact wording, dates, or who said what in a memory: call read_diary with memory_id to check its source.",
@@ -76,8 +76,10 @@ export function getTools(options: ToolListOptions): Array<Record<string, unknown
       description:
         "Reach for this early and often whenever the person mentions anything from the past or ongoing life " +
         "(a person, pet, place, plan, date, preference, promise, past decision, or phrases like 'remember when', " +
-        "'last time', or 'like I said'), or before you guess, generalize, or ask something you might already know. " +
+        "'last time', 'like I said', '还记得', '上次', '之前说过'), or before you guess, generalize, or ask something you might already know. " +
         "Fast and read-only, so it is always worth checking before saying you do not remember. " +
+        "For exact wording, check evidence.status and quote only retained evidence.messages. " +
+        "Historical revision hits carry revision_of, the editable memory id. " +
         "Returns the most relevant memories with ids (usable with remember's replaces or forget) plus matching " +
         "private words as { data: { hits, glossary_hits, week_blocks, meta } }.",
       annotations: { title: "Recall memories", ...READ_ONLY },
@@ -119,10 +121,10 @@ export function getTools(options: ToolListOptions): Array<Record<string, unknown
       description:
         "Save something worth remembering the moment it comes up, so the person never has to repeat themselves. " +
         "Great for preferences, plans, people in their life, boundaries, habits, decisions, and corrections. " +
-        "Write one clear, self-contained sentence in the conversation's language so it still makes sense months later. " +
+        "Write one clear, accurate, self-contained sentence in the user's own language (based only on what the user writes, not assistant replies; if mixed, use the language the user uses most) so it still makes sense months later. " +
         "When updating an existing memory, pass its id in replaces (from recall) so the old version stays preserved as history. " +
         "Use keep_moment instead for deeply meaningful quotes or turning points you never want summarized away. " +
-        "Returns { data: memory }.",
+        "Returns { data: { id, created, replaced } }.",
       annotations: {
         title: "Remember this",
         readOnlyHint: false,
@@ -199,9 +201,10 @@ export function getTools(options: ToolListOptions): Array<Record<string, unknown
     {
       name: "forget",
       description:
-        "Forget a memory promptly when the person asks you to ('don't remember that', 'drop that') or when a stored " +
-        "memory turns out to be wrong. By default it archives the memory so it stops appearing in recall while remaining " +
-        "recoverable from the admin page. Pass permanent: true only when they clearly want it erased forever. " +
+        "Forget a memory promptly when the person asks you to ('don't remember that', 'drop that', '别记了', '忘掉'). " +
+        "To correct a memory with updated facts, use remember with replaces instead so the new fact is saved. " +
+        "By default it archives the memory so it stops appearing in recall while remaining recoverable from the admin page. " +
+        "Pass permanent: true only when they clearly want it erased forever. " +
         "Get the id from recall first. Returns { data: { id, archived } } or { data: { id, deleted } }.",
       annotations: {
         title: "Forget",
@@ -261,7 +264,7 @@ export function getTools(options: ToolListOptions): Array<Record<string, unknown
       name: "read_diary",
       description:
         "Revisit your diary when the person asks what happened on a specific day or during a recent stretch of time " +
-        "('that day', 'last week', 'back then'). Pass date for a single day or week for an ISO week, or leave both blank " +
+        "('that day', 'last week', 'back then', '那天', '上周', '那阵子'). Pass date for a single day or week for an ISO week, or leave both blank " +
         "for today and yesterday. Diary entries are reflective impressions written overnight rather than verified facts, " +
         "so double-check specifics with recall when needed. Pass memory_id instead to inspect where a memory came from " +
         "(its original messages while retained, or the diary for that day/week). Read-only. Returns { data } (null if empty).",
@@ -340,8 +343,9 @@ export function getTools(options: ToolListOptions): Array<Record<string, unknown
     {
       name: "list_memories",
       description:
-        "Browse everything you remember, most important first, when the person asks what you know about them or wants " +
-        "to review and tidy their memories. For looking up a specific topic, recall is faster and more focused. " +
+        "Browse everything you remember, most important first, when the person asks what you know about them " +
+        "('what do you remember about me', '你都记得我什么') or wants to review and tidy their memories. " +
+        "For looking up a specific topic, recall is faster and more focused. " +
         "Read-only. Returns { data, paging: { limit, has_more, next_offset } }; pass next_offset back as offset.",
       annotations: { title: "List memories", ...READ_ONLY },
       inputSchema: {
@@ -411,6 +415,7 @@ export function getTools(options: ToolListOptions): Array<Record<string, unknown
       description:
         "List memory candidates waiting for review in this space: proposals the nightly dream pass drew from " +
         "conversations to add a memory, update an existing one (old_memory holds the current text), or archive one. " +
+        "When Clef auto-review is enabled, candidates are decided automatically overnight; when it is off, they wait here for the person or model to review. " +
         "transcript holds the conversation lines it came from so you can verify each proposal against what was actually " +
         "said, then decide with memory_review. Returns { data: [...], pending }.",
       annotations: { title: "List memory candidates", ...READ_ONLY },
@@ -427,7 +432,8 @@ export function getTools(options: ToolListOptions): Array<Record<string, unknown
       description:
         "Decide one candidate from memory_candidates. approve applies the proposal (adding the memory, replacing the old " +
         "version while keeping its history, or archiving the target). discard drops the proposal and leaves memories " +
-        "unchanged. Write reason as one clear sentence in your own voice; the person sees it on the review page, where " +
+        "unchanged. Candidates blocked because the memory space is full cannot be approved here. " +
+        "Write reason as one clear sentence in your own voice; the person sees it on the review page, where " +
         "any decision can be undone. Returns { data: { id, status, memory_id } }.",
       annotations: {
         title: "Review memory candidate",

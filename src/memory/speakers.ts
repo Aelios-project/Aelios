@@ -33,7 +33,7 @@ export function formatSpeakerTranscript(
 }
 
 export function nameOnlyRule(speakers: DreamSpeakers): string {
-  return `Refer to both people strictly by name: "${speakers.userName}" and "${speakers.assistantName}". Never use generic labels like user/assistant, and do not substitute first/second-person pronouns for their names.`;
+  return `Refer to both people strictly by name: "${speakers.userName}" and "${speakers.assistantName}". Never use generic labels like user/assistant or 用户/助手, and do not substitute first/second-person pronouns (I/you, 我/你) for their names.`;
 }
 
 export function diarySpeakerRules(speakers: DreamSpeakers | null): string[] {

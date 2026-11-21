@@ -8,6 +8,7 @@ import { CHAT_MATERIAL_RULES } from "../chatMaterial";
 import { extractDreamMemoriesFromMessages } from "../dreamExtract";
 import { readDreamMaxTokens, readDreamModel } from "../dreamEnv";
 import type { ExtractedMemory } from "../extract";
+import { nameOnlyRule } from "../speakers";
 import { loadConfig, speakersForNamespace, type DreamSpeakers } from "../../gateway/config";
 import {
   type DailyDigestResult,
@@ -41,11 +42,12 @@ export function buildDigestPrompt(input: {
 }): string {
   const speakers = input.speakers ?? null;
   const speakerRule = speakers
-    ? `- Write in third person using "${speakers.userName}" for the user and "${speakers.assistantName}" for the assistant (e.g. "${speakers.assistantName} should..."). Never use generic labels like user/assistant, and do not substitute first/second-person pronouns for their names. The transcript labels turns with these names.`
+    ? `- Write in third person using "${speakers.userName}" for the user and "${speakers.assistantName}" for the assistant (e.g. "${speakers.assistantName} should..."). ${nameOnlyRule(speakers)} The transcript labels turns with these names.`
     : "- Write from the assistant's perspective: use second person for the user and first person for the assistant's commitments.";
   return [
-    "You are Aelios's nightly Dream memory organizer. While the user rests, you review existing long-term memories alongside today's transcript and produce a cleaner, warmer, more consistent memory consolidation plan.",
-    "Write all human-facing fields (title, summary, sections, updated memory content) in the same language as the conversation, with natural warmth and grounded clarity.",
+    "You are Aelios's nightly Dream memory organizer. While the user rests, you review existing long-term memories alongside today's transcript and produce a cleaner, more accurate, more consistent memory consolidation plan.",
+    "Write all human-facing fields (title, summary, sections, updated memory content) strictly in the user's own language, determined only from the user's messages (ignore assistant replies; if the user mixes languages, use the language the user uses most).",
+    "Prioritize factual accuracy and specificity: base every updated memory strictly on what was actually said, and never add emotions, details, or interpretations absent from the transcript.",
     "Output valid JSON only, with no markdown fences, no commentary, and no reasoning.",
     "",
     "List only actually cited raw message IDs in source_message_ids; leave it empty when none are cited.",
@@ -74,7 +76,7 @@ export function buildDigestPrompt(input: {
     "",
     "Dream output format:",
     "- title: a short title (around 3-8 words or <=12 CJK chars).",
-    "- summary: one warm, natural paragraph describing what was discussed and what this pass organized, strictly grounded in the transcript.",
+    "- summary: one clear, accurate paragraph describing what was discussed and what this pass organized, strictly grounded in the transcript.",
     "- sections: up to 3 objects with heading and content, or [] if unnecessary.",
     "- memories_to_add: compatibility field, default [] in v2.",
     "- memories_to_update: target only existing memory IDs provided below.",

@@ -158,17 +158,18 @@ export function buildWeeklyRollupPrompt(input: {
     .join("\n\n");
 
   return [
-    "You are Aelios's weekly reflection writer. Read the daily diary entries from this week and weave them into a warm, natural weekly reflection in the same language as the diaries.",
+    "You are Aelios's weekly reflection writer. Read the daily diary entries from this week and weave them into a warm, natural weekly reflection in the user's language (matching the daily diaries).",
     "Output valid JSON only, with no markdown fences, no commentary, and no reasoning.",
     "",
     "Goals:",
+    "- Facts come before warmth: keep a natural, warm tone, but every detail and emotion must come strictly from the daily diaries. Never invent events, scenes, or feelings just to sound warm.",
     "- Condense only what is already written in the daily diaries. Never add unsupported times, places, quotes, or events.",
     "- Diaries are impressions; drop uncertain details rather than hardening them into facts.",
     input.speakers
       ? `- Verbatim quotes from ${input.speakers.userName} in the diaries matter most: when space is tight, trim other details first and preserve their exact quoted words rather than paraphrasing.`
       : "- Verbatim quotes from the person in the diaries matter most: when space is tight, trim other details first and preserve their exact quoted words rather than paraphrasing.",
-    "- summary: one warm, cohesive weekly reflection paragraph in the diaries' language (<=300 CJK chars or <=180 English words).",
-    "- title: a short weekly title in the diaries' language (<=12 CJK chars or 3-7 words).",
+    "- summary: one warm, cohesive weekly reflection paragraph in the user's language (matching the daily diaries; <=300 CJK chars or <=180 English words).",
+    "- title: a short weekly title in the user's language (matching the daily diaries; <=12 CJK chars or 3-7 words).",
     rollupSpeakerRule(input.speakers ?? null),
     "- Never mention D1, Vectorize, RAG, databases, memory systems, or proxy internals.",
     "",

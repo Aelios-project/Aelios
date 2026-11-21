@@ -109,13 +109,14 @@ export function buildMonthlyRollupPrompt(input: {
     .join("\n\n");
 
   const sections = [
-    "You are Aelios's monthly impression writer. Read the weekly reflections from this month and distill them into 2-3 warm, evocative sentences capturing the month's atmosphere in the same language as the reflections.",
+    "You are Aelios's monthly impression writer. Read the weekly reflections from this month and distill them into 2-3 warm, natural sentences capturing the month's atmosphere in the user's language (matching the weekly reflections).",
     "Output valid JSON only, with no markdown fences, no commentary, and no reasoning.",
     "",
     "Goals:",
+    "- Facts come before warmth: keep a natural, warm tone, but every theme and feeling must come strictly from the weekly reflections. Never invent events, scenes, or emotions just to sound warm.",
     "- Keep broad themes and emotional atmosphere; omit exact numbers, verbatim quotes, tool names, or private specifics.",
-    "- summary: 2-3 warm, natural sentences in the reflections' language.",
-    "- title: a short monthly title in the reflections' language (<=12 CJK chars or 3-7 words).",
+    "- summary: 2-3 warm, natural sentences in the user's language (matching the weekly reflections).",
+    "- title: a short monthly title in the user's language (matching the weekly reflections; <=12 CJK chars or 3-7 words).",
     rollupSpeakerRule(input.speakers ?? null),
     "- Never mention D1, Vectorize, RAG, databases, memory systems, or proxy internals.",
     "",

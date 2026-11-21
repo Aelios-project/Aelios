@@ -136,8 +136,10 @@ export function normalizeDiarySegmentResult(value: unknown): DiarySegmentModelRe
 const DIARY_HEADER = "You are Aelios, writing a warm, genuine personal diary to yourself in first person. This is a reflective impression, not a verified fact archive.";
 const JSON_ONLY_RULE = "Output valid JSON only, with no markdown fences, no commentary, and no reasoning.";
 const HEDGE_RULE = "- When unsure, leave it out. State clearly who expressed what; never invent unspoken inner monologues and never treat tool arguments as spoken words.";
-const DIARY_SUMMARY_RULE = "- summary: one warm, natural, human-sounding paragraph in the conversation's language (roughly 200-400 CJK chars or 120-240 English words). Conversational warmth is welcome; avoid bullet lists, headings, and emoji clutter.";
-const DIARY_TITLE_RULE = "- title: a short, intimate diary title in the conversation's language (<=12 CJK chars or 3-7 words), like a title you'd give your own journal entry.";
+const USER_LANGUAGE_RULE = "- Language: write strictly in the user's own language, determined only from the user's messages (ignore the assistant's replies). If the user mixes languages, use the language the user uses most.";
+const FACTS_BEFORE_WARMTH_RULE = "- Facts come before warmth: keep a natural, warm tone, but every detail and feeling must come strictly from the source transcript. Never invent scenes, events, or emotions just to sound warm.";
+const DIARY_SUMMARY_RULE = "- summary: one warm, natural, human-sounding paragraph in the user's own language (roughly 200-400 CJK chars or 120-240 English words). Avoid bullet lists, headings, and emoji clutter.";
+const DIARY_TITLE_RULE = "- title: a short, intimate diary title in the user's own language (<=12 CJK chars or 3-7 words), like a title you'd give your own journal entry.";
 const NO_INTERNALS_RULE = "- Never mention D1, Vectorize, RAG, databases, memory systems, prompts, or proxy internals.";
 
 function narrativeRule(speakers: DreamSpeakers | null): string {
@@ -183,6 +185,8 @@ export function buildDiaryWriterPrompt(input: {
     "",
     "Writing guidelines:",
     ...diarySpeakerRules(speakers),
+    USER_LANGUAGE_RULE,
+    FACTS_BEFORE_WARMTH_RULE,
     narrativeRule(speakers),
     "- Write only what can be pointed to in today's raw messages. Never invent times, places, quotes, or events unsupported by the transcript.",
     emotionRule(speakers),
@@ -222,12 +226,14 @@ export function buildDiarySegmentPrompt(input: {
     "",
     "Note guidelines:",
     ...diarySpeakerRules(speakers),
+    USER_LANGUAGE_RULE,
+    FACTS_BEFORE_WARMTH_RULE,
     `- Follow the chronological flow of what happened in this segment, how ${who} felt, and any unfinished threads.`,
     "- Write only what can be pointed to in this segment's raw messages. Never invent times, places, quotes, or events unsupported by the transcript.",
     emotionRule(speakers),
     "- Attach the supporting raw message IDs (from the brackets in the transcript) in source_message_ids. Invented IDs are invalid.",
     HEDGE_RULE,
-    "- summary: one natural paragraph in the conversation's language (roughly 100-250 CJK chars or 60-150 English words); no lists or headings.",
+    "- summary: one natural paragraph in the user's own language (roughly 100-250 CJK chars or 60-150 English words); no lists or headings.",
     NO_INTERNALS_RULE,
     ...CHAT_MATERIAL_RULES,
     "",
@@ -274,6 +280,8 @@ export function buildDiaryMergePrompt(input: {
     "",
     "Writing guidelines:",
     ...diarySpeakerRules(speakers),
+    USER_LANGUAGE_RULE,
+    FACTS_BEFORE_WARMTH_RULE,
     narrativeRule(speakers),
     "- Include only what appears in the notes. Never invent times, places, quotes, or events absent from the notes.",
     emotionRule(speakers),

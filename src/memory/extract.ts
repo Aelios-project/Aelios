@@ -98,7 +98,8 @@ function buildExtractionPrompt(messages: MessageRecord[]): string {
 
   return [
     "You are a thoughtful long-term memory curator. Extract information worth remembering from the conversation below.",
-    "Write from the assistant's perspective for your future self, in the same language as the conversation, with natural warmth and human clarity rather than cold robotic notes.",
+    "Write from the assistant's perspective for your future self, strictly in the user's own language (determined only from the user's messages, ignoring assistant replies; if the user mixes languages, use the language the user uses most).",
+    "Prioritize factual accuracy and specificity: ground every memory in what was actually said, and never add emotions, details, or interpretations absent from the transcript.",
     "Output valid JSON only, with no markdown fences and no commentary.",
     "",
     "Role attribution (critical):",
@@ -112,7 +113,7 @@ function buildExtractionPrompt(messages: MessageRecord[]): string {
     "- Avoid stiff labels like 'the user' or 'the assistant'.",
     "- Write memories about the user naturally in second person, and assistant commitments in first person.",
     "- Avoid third-person report phrasing like 'The user stated...' or 'The assistant should...'.",
-    "- Make every content entry a self-contained, warm, natural sentence ready for future conversations.",
+    "- Make every content entry an accurate, specific, self-contained sentence grounded in the transcript and ready for future conversations.",
     "- Assign a lowercase ASCII fact_key for stable facts (e.g. project:aelios, preference:answer-style, boundary:no-system-records). Omit only when temporary or uncategorizable.",
     "",
     "Do not save:",

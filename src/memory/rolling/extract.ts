@@ -123,7 +123,7 @@ export function dreamWindowExtractor(
         messages: [
           { role: "system", content: "You are a strict JSON generator. Output valid JSON only." },
           { role: "user", content: [
-            "Propose the minimum set of genuinely new events from the window transcript, written in the conversation's language with natural warmth and strict grounding. Emit no_op for anything already covered by explicit_writes.",
+            "Propose the minimum set of genuinely new events from the window transcript, written strictly in the user's own language (determined only from the user's messages, ignoring assistant replies; if the user mixes languages, use the language the user uses most). Prioritize factual accuracy and specificity: ground every memory strictly in the transcript without adding unstated emotions, details, or interpretations. Emit no_op for anything already covered by explicit_writes.",
             "Reuse episode_key for the same ongoing episode; sustained affectionate tone does not count as multiple relationship milestones.",
             "recall_hits are read-only context, not user confirmation. Never invent evidence IDs, memory IDs, or quotes.",
             "Each event includes op, episode_key, type, content, attributed_role, evidence_ids, and evidence_quote.",
