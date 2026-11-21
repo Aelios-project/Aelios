@@ -50,7 +50,7 @@ function readDbV2Source() {
 // ---------------------------------------------------------------------------
 
 const dedupGateSource = readSource("src/memory/dedupGate.ts");
-const memoriesSource = readSource("src/api/memories.ts");
+const memoriesSource = ["src/api/memories.ts", "src/api/memories/crud.ts", "src/api/memories/candidates.ts"].map(readSource).join("\n");
 // dailyDigest may be a thin re-export after the dream/ phase split; scan barrel + phases.
 const dreamDir = resolve(root, "src/memory/dream");
 const digestSource = [
@@ -115,7 +115,7 @@ assert.match(monthlyRollupSource, /export async function runMonthlyRollup/);
 assert.match(monthlyRollupSource, /!existingMonthly && weeklyLogs\.length < 2/);
 assert.match(monthlyRollupSource, /DIARY_MODEL/);
 assert.match(monthlyRollupSource, /existingMonthly/);
-assert.match(monthlyRollupSource, /本月周记/);
+assert.match(monthlyRollupSource, /Weekly reflections this month/);
 assert.match(monthlyRollupSource, /Asia\/Shanghai/);
 assert.doesNotMatch(monthlyRollupSource, /DAILY_DIGEST_MODEL/);
 

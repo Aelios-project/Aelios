@@ -28,7 +28,21 @@ const digestSource = [
   ...dreamPhaseFiles.map((name) => readFileSync(join(dreamDir, name), "utf8"))
 ].join("\n");
 const recallSource = readFileSync(resolve(root, "src/memory/v2/recall.ts"), "utf8");
-const mcpSource = readFileSync(resolve(root, "src/api/mcp.ts"), "utf8");
+function readTsTree(entryFile, dirPath) {
+  const parts = existsSync(entryFile) ? [readFileSync(entryFile, "utf8")] : [];
+  if (existsSync(dirPath)) {
+    const walk = (dir) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith(".ts")) parts.push(readFileSync(full, "utf8"));
+      }
+    };
+    walk(dirPath);
+  }
+  return parts.join("\n");
+}
+const mcpSource = readTsTree(resolve(root, "src/api/mcp.ts"), resolve(root, "src/api/mcp"));
 const dreamExtractSource = readFileSync(resolve(root, "src/memory/dreamExtract.ts"), "utf8");
 const indexSource = readFileSync(resolve(root, "src/index.ts"), "utf8");
 const wranglerSource = readFileSync(resolve(root, "wrangler.toml"), "utf8");
@@ -41,11 +55,11 @@ const dbV2Source =
   dbV2DomainFiles.length > 0
     ? dbV2DomainFiles.map((name) => readFileSync(join(dbV2Dir, name), "utf8")).join("\n")
     : readFileSync(resolve(root, "src/db/v2.ts"), "utf8");
-const memoriesApiSource = readFileSync(resolve(root, "src/api/memories.ts"), "utf8");
+const memoriesApiSource = readTsTree(resolve(root, "src/api/memories.ts"), resolve(root, "src/api/memories"));
 // admin.ts may be a barrel; UI template contracts live in admin/ui.ts when split.
 const adminUiPath = resolve(root, "src/api/admin/ui.ts");
 const adminSource = existsSync(adminUiPath)
-  ? readFileSync(adminUiPath, "utf8")
+  ? readTsTree(adminUiPath, resolve(root, "src/api/admin/ui"))
   : readFileSync(resolve(root, "src/api/admin.ts"), "utf8");
 const candidateJudgeSource = readFileSync(resolve(root, "src/memory/candidateJudge.ts"), "utf8");
 
@@ -158,7 +172,7 @@ assert.match(recallSource, /const rowById = new Map\(rows\.map\(\(row\) => \[row
 assert.match(recallSource, /function candidateLongtailIds/);
 assert.match(memoriesApiSource, /export async function handleLongtailApi/);
 assert.match(memoriesApiSource, /const result = await deleteLongtail\(env, \{ namespace, id \}\);/);
-assert.match(memoriesApiSource, /import \{[^}]*\bdeleteVectorMemory\b[^}]*\} from "\.\.\/memory\/vectorStore";/);
+assert.match(memoriesApiSource, /import \{[^}]*\bdeleteVectorMemory\b[^}]*\} from "(?:\.\.\/)+memory\/vectorStore";/);
 assert.match(memoriesApiSource, /source: "legacy_vectorize"/);
 assert.match(adminSource, /\/v1\/longtail\/' \+ encodeURIComponent\(item\.id\)/);
 assert.match(adminSource, /worldSelection: \{\}/);
@@ -180,7 +194,7 @@ assert.match(adminSource, /await crypto\.subtle\.digest\('SHA-1', data\)/);
 // Types are enforced at the write boundary — no free-form types allowed.
 assert.match(dreamExtractSource, /import \{ clampMemoryType \} from "\.\/canonicalTypes"/);
 assert.match(dreamExtractSource, /type: clampMemoryType\(readString\(raw\.type\)\)/);
-assert.match(dreamExtractSource, /type 只能从这 8 个里选/);
+assert.match(dreamExtractSource, /type must be one of these 8 values only/);
 assert.match(dbV2Source, /import \{ clampMemoryType \} from "(?:\.\.\/)+memory\/canonicalTypes"/);
 assert.match(dbV2Source, /clampMemoryType\(input\.type, "note"\)/);
 // memories.ts writes through storedMemoryType: the eight, plus world_fact only where a caller asks for it.
@@ -190,10 +204,10 @@ assert.match(source, /import \{ clampMemoryType \} from "\.\/canonicalTypes"/);
 assert.match(source, /type: clampMemoryType\(input\.type, "note"\),/);
 assert.match(memoriesApiSource, /clampMemoryType\(readString\(body\.type\), "note"\)/);
 assert.match(memoriesApiSource, /clampMemoryType\(readString\(body\.type\) \|\| candidate\.type, "note"\)/);
-assert.match(digestSource, /memories_to_update 里的 type 只能从这 8 个里选/);
+assert.match(digestSource, /memories_to_update type must be one of/);
 assert.doesNotMatch(dreamExtractSource, /type: "project"/);
 assert.doesNotMatch(dbV2Source, /input\.newType \?\? "world_fact"/);
-assert.match(digestSource, /memories_to_add 默认给空数组/);
+assert.match(digestSource, /keep memories_to_add as \[\] by default/);
 assert.doesNotMatch(digestSource, /for \(const memory of digest\.memories_to_add \?\? \[\]\) \{\s+const factKey/s);
 assert.doesNotMatch(digestSource, /added \+= 0/);
 assert.match(candidateJudgeSource, /export function decideClef/);

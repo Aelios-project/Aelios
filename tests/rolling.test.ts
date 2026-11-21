@@ -264,7 +264,7 @@ test("A1 nightly owns off/shadow captures only after applying, and force may rer
   const extracts: string[] = [];
   env.AI = { async run(_model: string, request: { messages?: Array<{ content: string }> }) {
     const messages = request.messages ?? [];
-    if (messages[0]?.content.includes("不要输出思考过程")) return { response: digestReply };
+    if (messages[0]?.content.includes("no reasoning")) return { response: digestReply };
     extracts.push(messages[1]?.content ?? "");
     return { response: { memories: [] } };
   } } as Env["AI"];
@@ -310,7 +310,7 @@ test("late nightly batches extract candidates without replacing an existing diar
     const [system, body] = input.messages ?? [];
     if (!system) return { data: [[1, 0]] };
     const late = body.content.includes("The lens arrived.");
-    if (system.content.includes("不要输出思考过程")) {
+    if (system.content.includes("no reasoning")) {
       return { response: {
         title: late ? "Late draft" : "Existing diary", summary: late ? "Only the lens." : "Full-day summary.",
         source_message_ids: late ? ["late"] : ["early"]

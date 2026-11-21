@@ -5,7 +5,7 @@ import type { ExtractedMemory } from "../extract";
 import { isExplicitDecisionText } from "./decisionCues";
 
 export const DECISION_FORMAT =
-  '明确用户决定可加 decision: {"scope_key":"user/project/property","value":"原话中的取值"}。同时给 type=decision、attributed_role=user、evidence_quote、source_message_ids。scope_key 写问题的范围。不要把考虑、提问、引述或扮演认作决定。';
+  'For an explicit user decision, include decision: {"scope_key":"user/project/property","value":"exact choice from the message"}, along with type="decision", attributed_role="user", evidence_quote, and source_message_ids. scope_key names the decision scope. Never treat musing, questions, quotes, or roleplay as a decision.';
 
 export async function extractDecisionFallback(
   env: Env,
@@ -32,7 +32,7 @@ export async function extractDecisionFallback(
     messages: [message],
     diaryBackground: false,
     deadlineAt: input.deadlineAt,
-    decisionInstructions: `只复核这一句是否有明确决定。\n${DECISION_FORMAT}\n已有范围：${keys.join("、")}`
+    decisionInstructions: `Re-check only whether this single message states an explicit user decision.\n${DECISION_FORMAT}\nExisting scopes: ${keys.join(", ")}`
   });
   return result.memories.filter((candidate) => candidate.decision);
 }

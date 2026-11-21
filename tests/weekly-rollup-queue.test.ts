@@ -47,8 +47,8 @@ function fixture(t: TestContext) {
     AI: {
       async run(_model: string, input: any) {
         const prompt = String(input.messages?.at(-1)?.content ?? "");
-        const week = /周次：(\d{4}-W\d{2})/.exec(prompt)?.[1];
-        const month = /月份：(\d{4}-\d{2})/.exec(prompt)?.[1];
+        const week = /Week: (\d{4}-W\d{2})/.exec(prompt)?.[1];
+        const month = /Month: (\d{4}-\d{2})/.exec(prompt)?.[1];
         if (week) weeklyCalls.push(week);
         if (month) monthlyCalls.push(month);
         return { response: { title: `合成标题 ${week ?? month}`, summary: `合成摘要 ${week ?? month}` } };

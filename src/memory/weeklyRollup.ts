@@ -158,31 +158,31 @@ export function buildWeeklyRollupPrompt(input: {
     .join("\n\n");
 
   return [
-    "你是 Aelios 的周报整理器。你会读取一周内已写好的每日日记，把它们浓缩成一条自然中文周记。",
-    "只输出 JSON，不要 markdown，不要解释，不要输出思考过程。",
+    "You are Aelios's weekly reflection writer. Read the daily diary entries from this week and weave them into a warm, natural weekly reflection in the same language as the diaries.",
+    "Output valid JSON only, with no markdown fences, no commentary, and no reasoning.",
     "",
-    "目标：",
-    "- 只浓缩每日日记里已经写过的事。不要添加日记没有的具体时间、地点、引语或事件。",
-    "- 日记是印象；拿不准的细节删掉，不要写实。",
+    "Goals:",
+    "- Condense only what is already written in the daily diaries. Never add unsupported times, places, quotes, or events.",
+    "- Diaries are impressions; drop uncertain details rather than hardening them into facts.",
     input.speakers
-      ? `- 日记里用「」引用的${input.speakers.userName}的原话最该留下：篇幅不够时先压别的，原话尽量原样保留，别改写成转述。`
-      : "- 日记里用「」引用的她的原话最该留下：篇幅不够时先压别的，原话尽量原样保留，别改写成转述。",
-    "- summary 是一段自然中文周记，300 字以内。",
-    "- title 是 12 字以内的周标题。",
+      ? `- Verbatim quotes from ${input.speakers.userName} in the diaries matter most: when space is tight, trim other details first and preserve their exact quoted words rather than paraphrasing.`
+      : "- Verbatim quotes from the person in the diaries matter most: when space is tight, trim other details first and preserve their exact quoted words rather than paraphrasing.",
+    "- summary: one warm, cohesive weekly reflection paragraph in the diaries' language (<=300 CJK chars or <=180 English words).",
+    "- title: a short weekly title in the diaries' language (<=12 CJK chars or 3-7 words).",
     rollupSpeakerRule(input.speakers ?? null),
-    "- 不要提到 D1、Vectorize、RAG、数据库、记忆系统、代理层等实现细节。",
+    "- Never mention D1, Vectorize, RAG, databases, memory systems, or proxy internals.",
     "",
-    `周次：${input.week}`,
-    `日期范围：${input.startDate} 至 ${input.endDate}`,
+    `Week: ${input.week}`,
+    `Date range: ${input.startDate} to ${input.endDate}`,
     "",
-    "输出 JSON 结构：",
+    "Output JSON shape:",
     JSON.stringify({
-      title: "一周标题",
-      summary: "这一周发生了什么、情绪如何流动、有哪些值得继续记住的线索。"
+      title: "Weekly title",
+      summary: "What unfolded this week, how the mood flowed, and what threads are worth carrying forward."
     }),
     "",
-    "本周每日日记：",
-    diaryLines || "(无日记内容)"
+    "Daily diaries this week:",
+    diaryLines || "(no daily diaries)"
   ].join("\n");
 }
 

@@ -13,8 +13,8 @@ export async function loadSpeakersForNamespace(env: Env, namespace: string): Pro
 }
 
 export function speakerLabel(role: string, speakers: DreamSpeakers | null): string {
-  if (role === "assistant") return speakers?.assistantName ?? "我(助手)";
-  return speakers?.userName ?? "用户";
+  if (role === "assistant") return speakers?.assistantName ?? "Assistant";
+  return speakers?.userName ?? "User";
 }
 
 export function formatSpeakerTranscript(
@@ -33,22 +33,22 @@ export function formatSpeakerTranscript(
 }
 
 export function nameOnlyRule(speakers: DreamSpeakers): string {
-  return `只许用「${speakers.userName}」和「${speakers.assistantName}」指称双方。禁止出现 user、用户、assistant、助手，也不要用「你」「我」代替这两人。`;
+  return `Refer to both people strictly by name: "${speakers.userName}" and "${speakers.assistantName}". Never use generic labels like user/assistant, and do not substitute first/second-person pronouns for their names.`;
 }
 
 export function diarySpeakerRules(speakers: DreamSpeakers | null): string[] {
   if (!speakers) {
-    return ["- 用「我」指代助手自己；提到用户时用「她」或具体称呼，不要用「用户」。"];
+    return ['- Write in first person (I) for the assistant; refer to the user naturally (never as "the user").'];
   }
   return [
-    `- 说话人：用户是${speakers.userName}，助手是${speakers.assistantName}。下面 transcript 已用这两个名字标注角色。`,
-    `- 这是${speakers.assistantName}写给自己的日记。提到对方必须写「${speakers.userName}」，提到自己写「${speakers.assistantName}」。${nameOnlyRule(speakers)}`
+    `- Speakers: the user is ${speakers.userName}, and the assistant is ${speakers.assistantName}. The transcript below labels turns with these names.`,
+    `- This is ${speakers.assistantName}'s personal diary. Refer to the other person as "${speakers.userName}" and to the assistant as "${speakers.assistantName}". ${nameOnlyRule(speakers)}`
   ];
 }
 
 export function rollupSpeakerRule(speakers: DreamSpeakers | null): string {
   if (!speakers) {
-    return "- 站在「我=助手」视角；关于用户用「你」，关于助手承诺用「我需要」。";
+    return "- Write from the assistant's perspective: use second person for the user and first person for the assistant's own commitments.";
   }
-  return `- 说话人：用户是${speakers.userName}，助手是${speakers.assistantName}。${nameOnlyRule(speakers)}`;
+  return `- Speakers: the user is ${speakers.userName}, and the assistant is ${speakers.assistantName}. ${nameOnlyRule(speakers)}`;
 }

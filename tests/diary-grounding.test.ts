@@ -21,9 +21,9 @@ test("diary prompt forbids invented specifics and requires source ids", () => {
     existingDraft: null
   });
   assert.match(prompt, /source_message_ids/);
-  assert.match(prompt, /没有原文支撑/);
-  assert.match(prompt, /傍晚下班后抱怨/);
-  assert.match(prompt, /用「我」指代助手自己/);
+  assert.match(prompt, /unsupported by the transcript/);
+  assert.match(prompt, /complaining after work in the evening/);
+  assert.match(prompt, /Write in first person \(I\) for the assistant/);
   assert.doesNotMatch(prompt, /具体细节优先于抽象概括/);
   assert.doesNotMatch(prompt, /古法PPT/);
 });
@@ -43,10 +43,10 @@ test("named speakers replace 用户/助手 in the diary prompt", () => {
     existingDraft: null,
     speakers: { userName: "小南", assistantName: "小北" }
   });
-  assert.match(prompt, /用户是小南，助手是小北/);
+  assert.match(prompt, /the user is 小南, and the assistant is 小北/);
   assert.match(prompt, /\[msg_1\].*\[小南\]/);
-  assert.match(prompt, /小南今天显得累/);
-  assert.doesNotMatch(prompt, /用「我」指代助手自己/);
+  assert.match(prompt, /小南 seemed tired today/);
+  assert.doesNotMatch(prompt, /Write in first person \(I\) for the assistant/);
 });
 
 test("claimed source ids that are not in the day's transcript are dropped", () => {
@@ -76,15 +76,15 @@ test("named speakers replace 用户/助手 in weekly and monthly rollups", () =>
     dailyLogs: [{ date: "2026-09-01", title: "累", summary: "小南有点累。" }],
     speakers
   });
-  assert.match(weekly, /用户是小南，助手是小北/);
-  assert.doesNotMatch(weekly, /我=助手/);
+  assert.match(weekly, /the user is 小南, and the assistant is 小北/);
+  assert.doesNotMatch(weekly, /use second person for the user/);
   const monthly = buildMonthlyRollupPrompt({
     month: "2026-09",
     weeklyLogs: [{ week: "2026-W36", title: "一周", summary: "还好。" }],
     speakers
   });
-  assert.match(monthly, /禁止出现 user、用户、assistant、助手/);
-  assert.doesNotMatch(monthly, /关于用户用「你」/);
+  assert.match(monthly, /Never use generic labels like user\/assistant/);
+  assert.doesNotMatch(monthly, /use second person for the user/);
 });
 
 test("boot impressions carry the issue #35 disclaimer", () => {

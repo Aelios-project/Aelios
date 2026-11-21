@@ -71,8 +71,8 @@ export function formatMemoryPatch(memories: MemoryApiRecord[]): string {
   if (lines.length === 0) return "";
 
   return [
-    "以下是你自然记得的长期记忆。只有在相关时使用，不要机械复述。",
-    "不要说\u201c根据记忆库\u201d\u201c系统记录\u201d或暴露任何代理层实现。",
+    "These are long-term memories you naturally remember. Draw on them only when relevant and weave them in naturally without reciting them mechanically.",
+    "Never say \"according to my memory store\", \"system records\", or expose any proxy implementation.",
     "",
     "<memories>",
     ...lines,

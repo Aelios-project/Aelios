@@ -11,7 +11,7 @@ import type { Env, OpenAIChatRequest, OpenAIChatResponse } from "../types";
 
 export const MODEL_RETRY_BACKOFF_MS = [2000, 8000];
 
-const DEFAULT_SYSTEM_PROMPT = "你是严格的 JSON 生成器。你只输出 JSON，不要输出思考过程。";
+const DEFAULT_SYSTEM_PROMPT = "You are a strict JSON generator. Output valid JSON only, with no markdown fences and no reasoning.";
 
 export interface ModelCallRequest {
   model: string;
