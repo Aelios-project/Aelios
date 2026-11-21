@@ -15,7 +15,7 @@ import { callOpenAICompat } from "../proxy/openaiAdapter";
 import type { Env, MemoryRelType, MemoryRelationRow, OpenAIChatRequest, OpenAIChatResponse } from "../types";
 import { createEmbedding } from "./embedding";
 import { isRecallableMemory } from "./search";
-import { DEFAULT_DREAM_MODEL, withThinkingBudget } from "./dreamEnv";
+import { DEFAULT_DREAM_MODEL, dreamOutputLimit } from "./dreamEnv";
 
 const RELATION_JUDGE_LIMIT = 200;
 const NEIGHBOR_TOP_K = 8;
@@ -271,11 +271,11 @@ async function judgeRelationsForPair(
       { role: "system", content: "Output JSON only." },
       { role: "user", content: prompt }
     ],
-    max_tokens: 600
+    ...dreamOutputLimit(env, model)
   };
 
   try {
-    const response = await callOpenAICompat(env, withThinkingBudget(env, body));
+    const response = await callOpenAICompat(env, body);
     if (!response.ok) return [];
     const json = (await response.json()) as OpenAIChatResponse;
     const text = json.choices?.[0]?.message?.content;
@@ -454,11 +454,11 @@ async function judgeSemanticConflict(
       { role: "system", content: "Output JSON only." },
       { role: "user", content: prompt }
     ],
-    max_tokens: 80
+    ...dreamOutputLimit(env, model)
   };
 
   try {
-    const response = await callOpenAICompat(env, withThinkingBudget(env, body));
+    const response = await callOpenAICompat(env, body);
     if (!response.ok) return false;
     const json = (await response.json()) as OpenAIChatResponse;
     const text = json.choices?.[0]?.message?.content;

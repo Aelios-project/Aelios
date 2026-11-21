@@ -64,7 +64,6 @@ export interface Env {
   DREAM_MAX_MESSAGES?: string;
   DREAM_MAX_RUNS?: string;
   DREAM_MAX_TOKENS?: string;
-  DREAM_THINKING_TOKENS?: string;
   DREAM_MODEL?: string;
   DREAM_MEMORY_CONTEXT_LIMIT?: string;
   DREAM_TIME_ZONE?: string;

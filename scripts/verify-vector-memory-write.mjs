@@ -154,7 +154,7 @@ assert.match(indexSource, /handleDiaryApi\(request, env\)/);
 assert.doesNotMatch(indexSource, /runMemoryExtractionBatches/);
 assert.match(indexSource, /url\.pathname\.startsWith\("\/v1\/longtail\/"\)/);
 assert.match(indexSource, /handleLongtailApi\(request, env\)/);
-assert.match(dreamExtractSource, /import \{ DEFAULT_DREAM_MODEL, readDreamTimeZoneFromEnv \} from "\.\/dreamEnv";/);
+assert.match(dreamExtractSource, /import \{ DEFAULT_DREAM_MODEL, dreamOutputLimit, readDreamTimeZoneFromEnv \} from "\.\/dreamEnv";/);
 assert.match(dreamExtractSource, /export function buildDreamExtractPrompt/);
 assert.match(dreamExtractSource, /export async function extractDreamMemoriesFromMessages/);
 assert.match(digestSource, /source: "dream_extract"/);

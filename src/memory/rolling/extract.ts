@@ -2,7 +2,7 @@ import type { Env } from "../../types";
 import { listActiveFactKeys } from "../../db/v2";
 import { extractJsonObject, readString, readStringArray } from "../../utils/parse";
 import { sanitizeMemoryContent } from "../../utils/sanitize";
-import { readDreamMaxTokens, readDreamModel } from "../dreamEnv";
+import { dreamOutputLimit, readDreamModel } from "../dreamEnv";
 import { callDreamModelJson } from "../dream/modelCall";
 import { readScopedDecision } from "../currentState/scopeKey";
 import { DECISION_FORMAT } from "../currentState/extract";
@@ -109,8 +109,7 @@ export function parseWindowProposal(text: string): WindowProposal | null {
 export function dreamWindowExtractor(
   env: Env,
   namespace: string,
-  model = readDreamModel(env),
-  reasoningEffort?: "low" | "medium"
+  model = readDreamModel(env)
 ): WindowExtractor {
   return {
     async extract(packet) {
@@ -119,7 +118,6 @@ export function dreamWindowExtractor(
         .filter((key) => key.startsWith("decision:user/"));
       const response = await callDreamModelJson(env, {
         model,
-        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
         messages: [
           { role: "system", content: "You are a strict JSON generator. Output valid JSON only." },
           { role: "user", content: [
@@ -134,7 +132,7 @@ export function dreamWindowExtractor(
             JSON.stringify(packet),
           ].join("\n") },
         ],
-        max_tokens: readDreamMaxTokens(env),
+        ...dreamOutputLimit(env, model),
         response_format: { type: "json_object" },
         stream: false,
       });

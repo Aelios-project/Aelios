@@ -6,7 +6,7 @@ import { callDreamModelJson, DreamModelTimeoutError } from "./modelCall";
 import { extractJsonObject } from "../../utils/parse";
 import { CHAT_MATERIAL_RULES } from "../chatMaterial";
 import { extractDreamMemoriesFromMessages } from "../dreamExtract";
-import { readDreamMaxTokens, readDreamModel } from "../dreamEnv";
+import { dreamOutputLimit, readDreamModel } from "../dreamEnv";
 import type { ExtractedMemory } from "../extract";
 import { nameOnlyRule } from "../speakers";
 import { loadConfig, speakersForNamespace, type DreamSpeakers } from "../../gateway/config";
@@ -159,7 +159,7 @@ export async function callDigestModel(
       { role: "system", content: "You are a strict JSON generator. Output valid JSON only, with no markdown fences and no reasoning." },
       { role: "user", content: prompt }
     ],
-    max_tokens: readDreamMaxTokens(env),
+    ...dreamOutputLimit(env, model),
     response_format: {
       type: "json_object"
     },

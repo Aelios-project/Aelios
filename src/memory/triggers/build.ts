@@ -15,7 +15,7 @@ import { newId } from "../../utils/ids";
 import type { Env, OpenAIChatRequest, OpenAIChatResponse } from "../../types";
 import { buildTriggerPrompt, parseTriggerResponse, type TriggerDraft } from "./prompt";
 import { upsertTriggerVectors, deleteTriggerVectors } from "./store";
-import { withThinkingBudget } from "../dreamEnv";
+import { dreamOutputLimit } from "../dreamEnv";
 
 const BUILD_MEMORY_LIMIT = 120;
 const TRIGGERS_PER_MEMORY = 4;
@@ -50,11 +50,11 @@ export async function draftTriggersForMemory(
         })
       }
     ],
-    max_tokens: 800
+    ...dreamOutputLimit(env, model)
   };
 
   try {
-    const response = await callOpenAICompat(env, withThinkingBudget(env, body));
+    const response = await callOpenAICompat(env, body);
     if (!response.ok) return [];
     const json = (await response.json()) as OpenAIChatResponse;
     const text = json.choices?.[0]?.message?.content;

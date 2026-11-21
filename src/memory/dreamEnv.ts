@@ -1,5 +1,5 @@
 import type { Env } from "../types";
-import { readNonNegativeInt } from "../utils/request";
+import { isWorkersAiModel } from "../proxy/openaiAdapter";
 import { readPositiveInt, readString } from "./dreamUtils";
 
 const DEFAULT_MAX_MESSAGES = 40;
@@ -29,8 +29,8 @@ export function readFirstEnvValue(...values: unknown[]): unknown {
 
 /** Default for nightly and daytime Dream, the journal, the weekly and monthly summaries and chat imports. */
 export const DEFAULT_DREAM_MODEL = "workers-ai/@cf/zai-org/glm-4.7-flash";
-const DEFAULT_THINKING_TOKENS = 4096;
-const MAX_THINKING_TOKENS = 16_000;
+const WORKERS_AI_OUTPUT_LIMIT = 8000;
+const MAX_OUTPUT_LIMIT = 65_536;
 
 export function readDreamModel(env: Env): string | null {
   return (
@@ -51,23 +51,21 @@ export function readDreamMaxMessages(env: Env): number {
   );
 }
 
-export function readDreamMaxTokens(env: Env): number {
-  return readPositiveInt(readFirstEnvValue(env.DREAM_MAX_TOKENS, env.DAILY_DIGEST_MAX_TOKENS), 3000, 8000);
-}
-
-/** Room to think before answering, added on top of each background call's answer budget. */
-export function readDreamThinkingTokens(env: Pick<Env, "DREAM_THINKING_TOKENS">): number {
-  return readNonNegativeInt(env.DREAM_THINKING_TOKENS, DEFAULT_THINKING_TOKENS, MAX_THINKING_TOKENS);
+/** The output limit set in Settings, or undefined when none is set. */
+export function readDreamMaxTokens(env: Env): number | undefined {
+  const raw = readFirstEnvValue(env.DREAM_MAX_TOKENS, env.DAILY_DIGEST_MAX_TOKENS);
+  return readString(raw) ? readPositiveInt(raw, WORKERS_AI_OUTPUT_LIMIT, MAX_OUTPUT_LIMIT) : undefined;
 }
 
 /**
- * Background models (GLM-4.7, gpt-oss) think before they answer, and the thinking counts against
- * max_tokens. Adding the thinking budget keeps a long chain of thought from cutting off the JSON.
- * The model decides how long to think; this only bounds it. A call without max_tokens is left alone.
+ * The only length parameter a background call sends. Unset, it sends none and the model decides how
+ * long to think and answer, so any route works. Workers AI is the exception: models such as gpt-oss
+ * default to 256 tokens there, which cuts the JSON short, so they get a roomy limit instead.
  */
-export function withThinkingBudget<T extends { max_tokens?: number }>(env: Pick<Env, "DREAM_THINKING_TOKENS">, request: T): T {
-  if (request.max_tokens === undefined) return request;
-  return { ...request, max_tokens: request.max_tokens + readDreamThinkingTokens(env) };
+export function dreamOutputLimit(env: Env, model: string): { max_tokens?: number } {
+  const set = readDreamMaxTokens(env);
+  if (set !== undefined) return { max_tokens: set };
+  return isWorkersAiModel(model) ? { max_tokens: WORKERS_AI_OUTPUT_LIMIT } : {};
 }
 
 export function readDreamMemoryContextLimit(env: Env): number {
