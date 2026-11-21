@@ -2,6 +2,8 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 import { ADMIN_HTML } from '../src/api/admin/ui';
+import { describeSettings } from '../src/gateway/settings';
+import type { Env } from '../src/types';
 
 function panel(preferences: Record<string, string> = {}) {
   const storage = new Map(Object.entries(preferences));
@@ -282,6 +284,38 @@ function settingsPanel(fail = () => false) {
   return { app, sent, stored, maxInFlight: () => maxInFlight };
 }
 const item = (app: any, name: string) => app.gwItems().find((i: any) => i.name === name);
+
+test('every text field shows what clearing it will use in both languages', () => {
+  const { app } = panel();
+  app.gwGroups = describeSettings({} as Env, {}).groups;
+  for (const lang of ['zh', 'en']) {
+    app.lang = lang;
+    for (const field of app.gwItems().filter((entry: any) => entry.kind !== 'switch')) {
+      assert.ok(app.textSettingDefault(field).trim(), field.name);
+      assert.equal(field.value, '');
+    }
+  }
+  assert.match(ADMIN_HTML, /:aria-describedby="'default-' \+ item.name"/);
+  assert.match(ADMIN_HTML, /x-text="[^"]*textSettingDefault\(item\)"/);
+  assert.equal(app.textSettingDefault(item(app, 'DREAM_MODEL')), 'workers-ai/@cf/zai-org/glm-4.7-flash');
+  assert.match(app.textSettingDefault(item(app, 'DREAM_MAX_TOKENS')), /Workers AI 8000 tokens, provider default elsewhere/);
+  app.lang = 'zh';
+  assert.match(app.textSettingDefault(item(app, 'DREAM_MAX_TOKENS')), /其他线路由模型决定/);
+  item(app, 'DREAM_MODEL').saved = 'custom/model';
+  assert.equal(app.textSettingDefault(item(app, 'DIARY_MODEL')), 'custom/model');
+});
+
+test('blank values honor the deployment and legacy settings even while an override is saved', () => {
+  const { app } = panel();
+  const env = { DREAM_MODEL: 'deployment/model', DREAM_MAX_TOKENS: '8000', DAILY_DIGEST_MAX_TOKENS: '12000' };
+  app.gwGroups = describeSettings(env as Env, { DREAM_MODEL: 'saved/model', DREAM_MAX_TOKENS: '4000' }).groups;
+  assert.equal(app.textSettingDefault(item(app, 'DREAM_MODEL')), 'deployment/model');
+  assert.match(app.textSettingDefault(item(app, 'DREAM_MAX_TOKENS')), /^8000 tokens/);
+  assert.equal(item(app, 'DREAM_MAX_TOKENS').value, '4000');
+  app.gwGroups = describeSettings({ DAILY_DIGEST_MAX_TOKENS: '12000', DAILY_DIGEST_MODEL: 'legacy/model' } as Env, {}).groups;
+  assert.match(app.textSettingDefault(item(app, 'DREAM_MAX_TOKENS')), /^12000 tokens/);
+  assert.equal(app.textSettingDefault(item(app, 'DREAM_MODEL')), 'legacy/model');
+});
 
 test('a switch saves the moment it is flipped, sending only that one setting', async () => {
   const { app, sent } = settingsPanel();

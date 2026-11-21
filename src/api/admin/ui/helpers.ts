@@ -62,6 +62,7 @@ export const SETTING_ROW = `<div class="set-row" :class="item.under ? 'set-sub' 
                     <button type="button" x-show="item.saved" @click="saveSetting(item, '')" :disabled="item.busy" class="reset-btn" x-text="L('已改 · 恢复默认', 'Changed · Reset')"></button>
                     <button type="button" x-show="gwChildren(item.name).length && !gwQuery.trim()" @click="gwToggle('sub:' + item.name)" class="fold-btn" :aria-expanded="gwIsOpen('sub:' + item.name) ? 'true' : 'false'"><span x-text="gwIsOpen('sub:' + item.name) ? L('收起细项', 'Hide details') : L('细项', 'Details') + (gwChildrenChanged(item.name) ? L(' · 改过 ' + gwChildrenChanged(item.name) + ' 项', ' · ' + gwChildrenChanged(item.name) + ' changed') : '')"></span><span class="chev" :class="gwIsOpen('sub:' + item.name) ? 'is-open' : ''">${I.chevron}</span></button>
                   </div>
+                  <template x-if="item.kind !== 'switch'"><div class="set-default" :id="'default-' + item.name" x-text="L('留空时 · ', 'When blank · ') + textSettingDefault(item)"></div></template>
                   <div x-show="hintOpen(item.name)" class="set-hint">
                     <span x-text="sHint(item)"></span><code x-text="item.name"></code>
                   </div>
@@ -70,7 +71,7 @@ export const SETTING_ROW = `<div class="set-row" :class="item.under ? 'set-sub' 
                   <button type="button" role="switch" :aria-checked="settingOn(item) ? 'true' : 'false'" :aria-labelledby="'lb-' + item.name" :disabled="item.busy" @click="toggleSetting(item)" class="switch" :class="settingOn(item) ? 'is-on' : ''"><span></span></button>
                 </template>
                 <template x-if="item.kind !== 'switch'">
-                  <input :id="'setting-' + item.name" x-model="item.value" @change="saveSetting(item, item.value)" @keydown.enter.prevent="$event.target.blur()" @keydown.escape="item.value = item.saved; $event.target.blur()" :disabled="item.busy" :placeholder="item.deployed ? L('留空用 ', 'Blank uses ') + item.deployed : L('留空用默认值', 'Blank uses the default')" class="field set-input">
+                  <input :id="'setting-' + item.name" :aria-describedby="'default-' + item.name" x-model="item.value" @change="saveSetting(item, item.value)" @keydown.enter.prevent="$event.target.blur()" @keydown.escape="item.value = item.saved; $event.target.blur()" :disabled="item.busy" class="field set-input">
                 </template>
               </div>`;
 

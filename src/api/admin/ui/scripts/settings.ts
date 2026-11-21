@@ -19,6 +19,15 @@ export const ADMIN_SCRIPT_SETTINGS = String.raw`    async init() {
       const deployed = this.flagValue(item.deployed);
       return deployed === null ? item.defaultOn === true : deployed;
     },
+    textSettingDefault(item) {
+      if (item.inheritFrom) {
+        const parent = this.gwItems().find(other => other.name === item.inheritFrom);
+        const inherited = parent && (parent.saved || parent.deployed);
+        if (inherited && inherited.trim()) return inherited.trim();
+      }
+      const value = item.blankDefault || item.deployed || '';
+      return Array.isArray(value) ? this.L(value[0], value[1]) : value;
+    },
     settingOn(item) {
       const own = this.flagValue(item.value);
       return own === null ? this.switchBaseline(item) : own;
