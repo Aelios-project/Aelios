@@ -97,6 +97,7 @@ test("the extraction call gets the same output budget as the digest, not a lower
   const seen: unknown[] = [];
   const { env } = fixture(t, input => { seen.push(input.max_tokens); return { response: '{"memories":[]}' }; });
   const input = { namespace: "default", messages: messages(1), speakers: null };
+  env.DREAM_THINKING_TOKENS = "0"; // answer budget only; dream-model-defaults covers the thinking budget
   env.DREAM_MAX_TOKENS = "8000";
   await extractDreamMemoriesFromMessages(env, input);
   delete env.DREAM_MAX_TOKENS;

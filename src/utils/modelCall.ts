@@ -6,6 +6,7 @@
  * Callers keep their own JSON parsing, result normalization and model-name
  * resolution. Throws after the final retry.
  */
+import { withThinkingBudget } from "../memory/dreamEnv";
 import { callOpenAICompat } from "../proxy/openaiAdapter";
 import type { Env, OpenAIChatRequest, OpenAIChatResponse } from "../types";
 
@@ -118,7 +119,7 @@ export async function callModelWithRetry(env: Env, req: ModelCallRequest): Promi
     }
 
     try {
-      const response = await callOpenAICompat(env, request);
+      const response = await callOpenAICompat(env, withThinkingBudget(env, request));
       const elapsedMs = Date.now() - startedAt;
       if (!response.ok) {
         const retriable = isRetriableModelStatus(response.status);

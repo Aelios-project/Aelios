@@ -1,4 +1,5 @@
 import type { Env } from "../types";
+import { readNonNegativeInt } from "../utils/request";
 import { readPositiveInt, readString } from "./dreamUtils";
 
 const DEFAULT_MAX_MESSAGES = 40;
@@ -26,7 +27,10 @@ export function readFirstEnvValue(...values: unknown[]): unknown {
   return undefined;
 }
 
-const DEFAULT_DREAM_MODEL = "workers-ai/@cf/openai/gpt-oss-120b";
+/** Default for nightly and daytime Dream, the journal, the weekly and monthly summaries and chat imports. */
+export const DEFAULT_DREAM_MODEL = "workers-ai/@cf/zai-org/glm-4.7-flash";
+const DEFAULT_THINKING_TOKENS = 4096;
+const MAX_THINKING_TOKENS = 16_000;
 
 export function readDreamModel(env: Env): string | null {
   return (
@@ -49,6 +53,21 @@ export function readDreamMaxMessages(env: Env): number {
 
 export function readDreamMaxTokens(env: Env): number {
   return readPositiveInt(readFirstEnvValue(env.DREAM_MAX_TOKENS, env.DAILY_DIGEST_MAX_TOKENS), 3000, 8000);
+}
+
+/** Room to think before answering, added on top of each background call's answer budget. */
+export function readDreamThinkingTokens(env: Pick<Env, "DREAM_THINKING_TOKENS">): number {
+  return readNonNegativeInt(env.DREAM_THINKING_TOKENS, DEFAULT_THINKING_TOKENS, MAX_THINKING_TOKENS);
+}
+
+/**
+ * Background models (GLM-4.7, gpt-oss) think before they answer, and the thinking counts against
+ * max_tokens. Adding the thinking budget keeps a long chain of thought from cutting off the JSON.
+ * The model decides how long to think; this only bounds it. A call without max_tokens is left alone.
+ */
+export function withThinkingBudget<T extends { max_tokens?: number }>(env: Pick<Env, "DREAM_THINKING_TOKENS">, request: T): T {
+  if (request.max_tokens === undefined) return request;
+  return { ...request, max_tokens: request.max_tokens + readDreamThinkingTokens(env) };
 }
 
 export function readDreamMemoryContextLimit(env: Env): number {

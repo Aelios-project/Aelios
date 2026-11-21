@@ -43,7 +43,7 @@ MEMORY_FILTER_MAX_CONTENT_CHARS = "240"
 # purpose: embeddinggemma under-scores reworded-but-relevant hits (~0.15-0.20).
 # Precision is handled by the reranker downstream.
 MEMORY_FILTER_MIN_SCORE = "0.1"
-DREAM_MODEL = "workers-ai/@cf/openai/gpt-oss-120b"
+DREAM_MODEL = "workers-ai/@cf/zai-org/glm-4.7-flash"
 DEDUP_COSINE = "0.9"
 VISION_MODEL = "workers-ai/@cf/google/gemma-4-26b-a4b-it"
 # Vector recall floor (see MEMORY_FILTER_MIN_SCORE note above). Precision is

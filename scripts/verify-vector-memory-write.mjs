@@ -148,13 +148,13 @@ assert.match(recallSource, /floored_ids: flooredIds,\s+floored_count: flooredIds
 assert.match(mcpSource, /min_score: \{\s*type: "number",\s*minimum: 0,\s*maximum: 1\b/);
 assert.match(mcpSource, /min_score: typeof args\.min_score === "number" \? readNumber\(args\.min_score, 0\.15\) : undefined/);
 assert.match(wranglerSource, /crons = \["10 20 \* \* \*"\]/);
-assert.match(wranglerSource, /DREAM_MODEL = "workers-ai\/@cf\/openai\/gpt-oss-120b"/);
+assert.match(wranglerSource, /DREAM_MODEL = "workers-ai\/@cf\/zai-org\/glm-4\.7-flash"/);
 assert.match(wranglerSource, /DEDUP_COSINE = "0\.9"/);
 assert.match(indexSource, /handleDiaryApi\(request, env\)/);
 assert.doesNotMatch(indexSource, /runMemoryExtractionBatches/);
 assert.match(indexSource, /url\.pathname\.startsWith\("\/v1\/longtail\/"\)/);
 assert.match(indexSource, /handleLongtailApi\(request, env\)/);
-assert.match(dreamExtractSource, /const DEFAULT_WORKERS_AI_DREAM_MODEL = "workers-ai\/@cf\/openai\/gpt-oss-120b"/);
+assert.match(dreamExtractSource, /import \{ DEFAULT_DREAM_MODEL, readDreamTimeZoneFromEnv \} from "\.\/dreamEnv";/);
 assert.match(dreamExtractSource, /export function buildDreamExtractPrompt/);
 assert.match(dreamExtractSource, /export async function extractDreamMemoriesFromMessages/);
 assert.match(digestSource, /source: "dream_extract"/);

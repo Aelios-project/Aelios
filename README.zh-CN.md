@@ -308,6 +308,8 @@ clef 自动审关着时多列 `memory_candidates` `memory_review`；地址加 `&
 
 写入：助手直写 `remember`；夜里 cron（`10 20 * * *`）从当天对话抽事实 → 候选由 Cloudflare 的 clef 判记住或放下（`CLEF_AUTO_REVIEW`，默认开；关掉后候选留给人工，或让助手用 MCP 的 `memory_candidates`、`memory_review` 自己审），并写日记 / 周记 / 月记。整理的是 `DREAM_TIME_ZONE` 里的「昨天」，按 `DREAM_MAX_MESSAGES` 条一批，一晚最多 `DREAM_MAX_RUNS` 批；没整理完的日子，之后几晚会各补一批（回看 3 天），等不及就在夜间整理页手动补。某一天最后一批做完才写那一天的日记。
 
+模型：抽取、日记、周记月记都用 `DREAM_MODEL`，默认是 Workers AI 上的 `workers-ai/@cf/zai-org/glm-4.7-flash`。它会先想再答，`DREAM_THINKING_TOKENS`（默认 4096）加在每次的输出上限之上，免得想太多把答案挤掉；思考按输出计费。也可以换成别的线路，比如 `chatgpt/模型名`。
+
 召回：最后一句用户话 → 向量搜索 + 词面 → 原文片段批量重排 + 规则 → 把干净原文贴到当前消息末尾。默认不调用生成式 LLM，日常最多一条，回答旧事最多两条；低分不凑数，重排失败回落词面。分数与取舍可在 `/admin` → 设置 → 排查工具 查看。传输信封、哈希和消息 ID 不进入日常提示，同一会话里直接相邻且 90 秒内的两句会合并；主动搜索仍返回完整记录和 ID。日记不自动注入。
 
 清理：消息约 7 天；一条记忆 180 天里没被改写、没被想起、也没再被提到，才标过期（置顶和 identity、persona 不会过期），失效记录再过 30 天硬删。

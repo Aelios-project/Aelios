@@ -7,7 +7,7 @@ import {
   getTargetDigestDateLabel,
   readDailyCursor
 } from "./dreamDates";
-import { readDreamTimeZoneFromEnv } from "./dreamEnv";
+import { DEFAULT_DREAM_MODEL, readDreamTimeZoneFromEnv } from "./dreamEnv";
 import { readDreamCursorValue } from "./dailyDigest";
 import { getIsoWeekLabelForDateLabel } from "./weeklyRollup";
 import { extractJsonObject, readString, readStringArray } from "../utils/parse";
@@ -16,7 +16,6 @@ import { diarySpeakerRules, loadSpeakersForNamespace, speakerLabel, type DreamSp
 import { CHAT_MATERIAL_RULES, formatChatMaterial } from "./chatMaterial";
 import { readPositiveInt } from "./dreamUtils";
 
-const DEFAULT_DREAM_MODEL = "workers-ai/@cf/openai/gpt-oss-120b";
 const MAX_MESSAGES = 200;
 const HALF_MESSAGES = 100;
 

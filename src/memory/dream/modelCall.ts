@@ -1,5 +1,6 @@
 import { callOpenAICompat } from "../../proxy/openaiAdapter";
 import type { Env, OpenAIChatRequest, OpenAIChatResponse } from "../../types";
+import { withThinkingBudget } from "../dreamEnv";
 
 // Includes waiting for headers AND reading the response body. A timeout is not automatically retried.
 const DREAM_MODEL_TIMEOUT_MS = 120_000;
@@ -27,7 +28,7 @@ export async function callDreamModelJson(
     }, timeoutMs);
   });
   const operation = (async () => {
-    const response = await callOpenAICompat(env, request, undefined, controller.signal);
+    const response = await callOpenAICompat(env, withThinkingBudget(env, request), undefined, controller.signal);
     if (!response.ok) {
       await response.body?.cancel().catch(() => {});
       return { ok: false, status: response.status, statusText: response.statusText };

@@ -7,7 +7,7 @@ import type { Env, MessageRecord, OpenAIChatRequest, OpenAIChatResponse } from "
 import { clampScore, extractJsonObject, readString, readStringArray } from "../utils/parse";
 import { CHAT_MATERIAL_RULES, clipMiddle, escapeChatTags, formatChatMaterial } from "./chatMaterial";
 import { addDaysToDateLabel } from "./dreamDates";
-import { readDreamTimeZoneFromEnv } from "./dreamEnv";
+import { DEFAULT_DREAM_MODEL, readDreamTimeZoneFromEnv } from "./dreamEnv";
 import { clampMemoryType } from "./canonicalTypes";
 import { nameOnlyRule, speakerLabel } from "./speakers";
 import type { ExtractedMemory } from "./extract";
@@ -15,7 +15,6 @@ import type { ExtractedMemory } from "./extract";
 // Same budget as the digest call: a smaller extract cap truncated the candidate list (and any reasoning tokens) of a full batch.
 const DEFAULT_DREAM_EXTRACT_MAX_TOKENS = 3000;
 const MAX_DREAM_EXTRACT_MAX_TOKENS = 8000;
-const DEFAULT_WORKERS_AI_DREAM_MODEL = "workers-ai/@cf/openai/gpt-oss-120b";
 
 export interface DreamExtractModelResult {
   memories: ExtractedMemory[];
@@ -47,7 +46,7 @@ function readDreamExtractModel(env: Env): string {
     env.DREAM_MODEL?.trim() ||
     env.DAILY_DIGEST_MODEL?.trim() ||
     env.SUMMARY_MODEL?.trim() ||
-    DEFAULT_WORKERS_AI_DREAM_MODEL
+    DEFAULT_DREAM_MODEL
   );
 }
 

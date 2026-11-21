@@ -12,14 +12,13 @@ import {
   addDaysToDateLabel,
   getDateLabelsLookback
 } from "./dreamDates";
-import { readDreamTimeZoneFromEnv } from "./dreamEnv";
+import { DEFAULT_DREAM_MODEL, readDreamTimeZoneFromEnv } from "./dreamEnv";
 import { getMondayOfIsoWeek } from "./weeklyRollup";
 import { extractJsonObject, readString } from "../utils/parse";
 import { formatDateLabel } from "../utils/time";
 import { loadSpeakersForNamespace, rollupSpeakerRule, type DreamSpeakers } from "./speakers";
 
 const DEFAULT_TIME_ZONE = "Asia/Shanghai";
-const DEFAULT_DREAM_MODEL = "workers-ai/@cf/openai/gpt-oss-120b";
 const MAX_MONTHS_PER_RUN = 2;
 const ROLLUP_AGE_DAYS = 35;
 

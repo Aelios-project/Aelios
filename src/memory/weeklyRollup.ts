@@ -15,13 +15,12 @@ import {
   getDateLabelsLookback,
   parseDateLabel
 } from "./dreamDates";
-import { readDreamTimeZoneFromEnv } from "./dreamEnv";
+import { DEFAULT_DREAM_MODEL, readDreamTimeZoneFromEnv } from "./dreamEnv";
 import { extractJsonObject, readString } from "../utils/parse";
 import { formatDateLabel } from "../utils/time";
 import { loadSpeakersForNamespace, rollupSpeakerRule, type DreamSpeakers } from "./speakers";
 
 const DEFAULT_TIME_ZONE = "Asia/Singapore";
-const DEFAULT_DREAM_MODEL = "workers-ai/@cf/openai/gpt-oss-120b";
 const MAX_WEEKS_PER_RUN = 2;
 
 export interface WeeklyRollupWeekDetail {

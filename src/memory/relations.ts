@@ -15,6 +15,7 @@ import { callOpenAICompat } from "../proxy/openaiAdapter";
 import type { Env, MemoryRelType, MemoryRelationRow, OpenAIChatRequest, OpenAIChatResponse } from "../types";
 import { createEmbedding } from "./embedding";
 import { isRecallableMemory } from "./search";
+import { DEFAULT_DREAM_MODEL, withThinkingBudget } from "./dreamEnv";
 
 const RELATION_JUDGE_LIMIT = 200;
 const NEIGHBOR_TOP_K = 8;
@@ -222,7 +223,7 @@ export interface RelationBuildStats {
 }
 
 function readDreamModel(env: Env): string {
-  return env.DREAM_MODEL || env.DAILY_DIGEST_MODEL || env.SUMMARY_MODEL || "workers-ai/@cf/openai/gpt-oss-120b";
+  return env.DREAM_MODEL || env.DAILY_DIGEST_MODEL || env.SUMMARY_MODEL || DEFAULT_DREAM_MODEL;
 }
 
 function extractJsonArray(text: string): unknown[] {
@@ -274,7 +275,7 @@ async function judgeRelationsForPair(
   };
 
   try {
-    const response = await callOpenAICompat(env, body);
+    const response = await callOpenAICompat(env, withThinkingBudget(env, body));
     if (!response.ok) return [];
     const json = (await response.json()) as OpenAIChatResponse;
     const text = json.choices?.[0]?.message?.content;
@@ -457,7 +458,7 @@ async function judgeSemanticConflict(
   };
 
   try {
-    const response = await callOpenAICompat(env, body);
+    const response = await callOpenAICompat(env, withThinkingBudget(env, body));
     if (!response.ok) return false;
     const json = (await response.json()) as OpenAIChatResponse;
     const text = json.choices?.[0]?.message?.content;
