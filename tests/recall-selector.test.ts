@@ -92,9 +92,9 @@ test("a long exact quote that does not fit does not consume the next item's slot
 
 test("extraction still asks for sources and forbids treating tool calls as success", () => {
   const prompt = buildDreamExtractPrompt([]);
-  assert.match(prompt, /source_message_ids 保留全部依据/);
-  assert.match(prompt, /不能把工具调用当作已执行成功/);
-  assert.match(prompt, /关于用户的记忆，优先写成“你……”/);
+  assert.match(prompt, /all supporting source_message_ids/);
+  assert.match(prompt, /Never treat a tool call as a completed real-world outcome/);
+  assert.match(prompt, /Write memories about the user naturally in second person/);
 });
 
 test("named speakers replace user/assistant labels in the dream extract prompt", () => {
@@ -103,13 +103,13 @@ test("named speakers replace user/assistant labels in the dream extract prompt",
     [],
     { userName: "小南", assistantName: "小北" }
   );
-  assert.match(prompt, /用户是小南，助手是小北/);
-  assert.match(prompt, /禁止出现 user、用户、assistant、助手/);
+  assert.match(prompt, /the user is 小南, and the assistant is 小北/);
+  assert.match(prompt, /Never use generic labels like user\/assistant/);
   assert.match(prompt, /\[msg_1\].*\[小南\]/);
-  assert.match(prompt, /小南确定了九月按原计划卖掉那台车/);
-  assert.doesNotMatch(prompt, /关于用户的记忆，优先写成“你……”/);
-  assert.doesNotMatch(prompt, /\[用户\]/);
-  assert.doesNotMatch(prompt, /我\(助手\)/);
+  assert.match(prompt, /小南 decided to sell the car in September/);
+  assert.doesNotMatch(prompt, /Write memories about the user naturally in second person/);
+  assert.doesNotMatch(prompt, /\[User\]/);
+  assert.doesNotMatch(prompt, /\[Assistant\]/);
 });
 
 test("dream digest uses speaker names in transcript and writing rules", () => {
@@ -121,8 +121,8 @@ test("dream digest uses speaker names in transcript and writing rules", () => {
     existingMemories: [],
     hasMore: false
   });
-  assert.match(unnamed, /站在“我=助手”的视角写/);
-  assert.match(unnamed, /我\(助手\)/);
+  assert.match(unnamed, /Write from the assistant's perspective/);
+  assert.match(unnamed, /\[Assistant\]/);
 
   const named = buildDigestPrompt({
     dateLabel: "2026-09-08",
@@ -133,10 +133,10 @@ test("dream digest uses speaker names in transcript and writing rules", () => {
     hasMore: false,
     speakers: { userName: "小南", assistantName: "小北" }
   });
-  assert.match(named, /关于用户用「小南……」/);
-  assert.match(named, /禁止出现 user、用户、assistant、助手/);
+  assert.match(named, /using "小南" for the user/);
+  assert.match(named, /Never use generic labels like user\/assistant/);
   assert.match(named, /\[msg_1\].*\[小北\]/);
-  assert.doesNotMatch(named, /我=助手/);
+  assert.doesNotMatch(named, /Write from the assistant's perspective/);
   assert.equal(formatTranscript([{ id: "m", conversation_id: "c", namespace: "default", role: "user", content: "hi", source: null, created_at: "t" }], { userName: "小南", assistantName: "小北" }), "<chat>\n[m][t][小南] hi\n</chat>");
 });
 

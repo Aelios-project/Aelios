@@ -91,54 +91,46 @@ function parseExtraction(text: string): MemoryExtractionResult {
 function buildExtractionPrompt(messages: MessageRecord[]): string {
   const transcript = messages
     .map((message) => {
-      const role = message.role === "assistant" ? "我(助手)" : "用户";
+      const role = message.role === "assistant" ? "Assistant" : "User";
       return `[${message.id}][${role}] ${message.content}`;
     })
     .join("\n\n");
 
   return [
-    "你是长期记忆小秘书。请从以下对话中抽取值得长期保存的信息。",
-    "你站在“我=助手”的视角写记忆，写给未来的我自己看。",
-    "只输出 JSON，不要 markdown，不要解释。",
+    "You are a thoughtful long-term memory curator. Extract information worth remembering from the conversation below.",
+    "Write from the assistant's perspective for your future self, strictly in the user's own language (determined only from the user's messages, ignoring assistant replies; if the user mixes languages, use the language the user uses most).",
+    "Prioritize factual accuracy and specificity: ground every memory in what was actually said, and never add emotions, details, or interpretations absent from the transcript.",
+    "Output valid JSON only, with no markdown fences and no commentary.",
     "",
-    "角色判定（非常重要）：",
-    "- [用户] 是正在和我说话的人。",
-    "- [我(助手)] 是我自己说过的话。",
-    "- 不要把我说过的话误写成用户的偏好、身份、经历或承诺。",
-    "- 只有用户明确说出、确认、长期表现出的信息，才能写成关于用户的记忆。",
-    "- 如果是我对用户做出的承诺、互动方式或应遵守的边界，用第一人称写：例如“我需要……”“我答应……”“我以后要……”。",
+    "Role attribution (critical):",
+    "- [User] is the person talking with you.",
+    "- [Assistant] is what you yourself said.",
+    "- Never misattribute the assistant's words as the user's preferences, identity, experiences, or promises.",
+    "- Record facts about the user only when explicitly stated, confirmed, or consistently shown by the user.",
+    "- For promises, interaction habits, or boundaries the assistant should uphold, write in first person (e.g. 'I promised...', 'I should...').",
     "",
-    "写法要求：",
-    "- 尽量不用生硬的“用户/助手”称呼。",
-    "- 关于用户的记忆，优先写成“你……”或自然描述，例如“你偏好……”“你正在……”。",
-    "- 关于我的责任/承诺/互动方式，写成“我……”例如“我需要在回答时更直接”。",
-    "- 不要写成第三人称报告腔，例如“用户表示……”“助手应该……”。",
-    "- 每条 content 必须是未来对话可直接使用的自然短句。",
-    "- 稳定事实尽量给 fact_key，格式用小写 ASCII 分组键，例如 project:aelios、preference:answer-style、boundary:no-system-records。只有临时或无法归类的记忆才省略。",
+    "Writing style:",
+    "- Avoid stiff labels like 'the user' or 'the assistant'.",
+    "- Write memories about the user naturally in second person, and assistant commitments in first person.",
+    "- Avoid third-person report phrasing like 'The user stated...' or 'The assistant should...'.",
+    "- Make every content entry an accurate, specific, self-contained sentence grounded in the transcript and ready for future conversations.",
+    "- Assign a lowercase ASCII fact_key for stable facts (e.g. project:aelios, preference:answer-style, boundary:no-system-records). Omit only when temporary or uncategorizable.",
     "",
-    "不要保存：",
-    "- 普通寒暄",
-    "- 临时语气词",
-    "- 重复信息",
-    "- 未明确表达的猜测",
-    "- 只属于本轮 prompt 风格的临时指令",
-    "- 记忆系统、debug-test、标签、测试口令、后端实现、D1、Vectorize、RAG、prompt block 等元信息",
+    "Do not save:",
+    "- Routine small talk or filler words",
+    "- Duplicates or unsupported guesses",
+    "- One-off prompt style tweaks",
+    "- Internal implementation details (memory store, debug tags, D1, Vectorize, RAG, prompt blocks)",
     "",
-    "优先保存：",
-    "- 用户长期偏好",
-    "- 项目/计划",
-    "- 重要事件",
-    "- 承诺",
-    "- 边界/雷点",
-    "- 关系里程碑",
-    "- 反复出现的习惯",
+    "Prioritize:",
+    "- Durable user preferences, ongoing projects/plans, meaningful events, promises, boundaries, relationship milestones, and recurring habits.",
     "",
-    "输出格式：",
+    "Output format:",
     JSON.stringify({
       memories: [
         {
           type: "project",
-          content: "你正在做一个 Cloudflare Worker 记忆代理。",
+          content: "You are building a Cloudflare Worker memory proxy.",
           importance: 0.86,
           confidence: 0.94,
           tags: ["project", "cloudflare"],
@@ -147,17 +139,17 @@ function buildExtractionPrompt(messages: MessageRecord[]): string {
         },
         {
           type: "boundary",
-          content: "我需要避免把你的设定或偏好说成系统记录。",
+          content: "I should avoid framing your personal preferences as system records.",
           importance: 0.82,
           confidence: 0.9,
           tags: ["boundary", "style"],
           source_message_ids: ["msg_y"]
         }
       ],
-      summary_patch: "本轮讨论了记忆代理，以及我以后应如何记录长期记忆。"
+      summary_patch: "We talked about the memory proxy and how I should record long-term memories naturally."
     }),
     "",
-    "对话：",
+    "Conversation:",
     transcript
   ].join("\n");
 }
@@ -176,7 +168,7 @@ export async function extractMemoriesFromMessages(
     messages: [
       {
         role: "system",
-        content: "你是严格的 JSON 生成器。你只输出 JSON。"
+        content: "You are a strict JSON generator. Output valid JSON only."
       },
       {
         role: "user",

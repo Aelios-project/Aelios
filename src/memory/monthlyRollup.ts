@@ -109,36 +109,37 @@ export function buildMonthlyRollupPrompt(input: {
     .join("\n\n");
 
   const sections = [
-    "你是 Aelios 的月度印象整理器。你会读取多周周记，写成 2-3 句宽泛的月度印象。",
-    "只输出 JSON，不要 markdown，不要解释，不要输出思考过程。",
+    "You are Aelios's monthly impression writer. Read the weekly reflections from this month and distill them into 2-3 warm, natural sentences capturing the month's atmosphere in the user's language (matching the weekly reflections).",
+    "Output valid JSON only, with no markdown fences, no commentary, and no reasoning.",
     "",
-    "目标：",
-    "- 只保留宽泛主题和关系氛围，不要精确数字、引语、工具名或私密细节。",
-    "- summary 是 2-3 句自然中文月度印象。",
-    "- title 是 12 字以内的月标题。",
+    "Goals:",
+    "- Facts come before warmth: keep a natural, warm tone, but every theme and feeling must come strictly from the weekly reflections. Never invent events, scenes, or emotions just to sound warm.",
+    "- Keep broad themes and emotional atmosphere; omit exact numbers, verbatim quotes, tool names, or private specifics.",
+    "- summary: 2-3 warm, natural sentences in the user's language (matching the weekly reflections).",
+    "- title: a short monthly title in the user's language (matching the weekly reflections; <=12 CJK chars or 3-7 words).",
     rollupSpeakerRule(input.speakers ?? null),
-    "- 不要提到 D1、Vectorize、RAG、数据库、记忆系统、代理层等实现细节。",
+    "- Never mention D1, Vectorize, RAG, databases, memory systems, or proxy internals.",
     "",
-    `月份：${input.month}`,
+    `Month: ${input.month}`,
     "",
-    "输出 JSON 结构：",
+    "Output JSON shape:",
     JSON.stringify({
-      title: "一月印象",
-      summary: "这个月整体氛围如何、关系主题是什么、有哪些值得继续感受的线索。"
+      title: "Monthly impression",
+      summary: "The overall warmth and rhythm of the month, recurring relationship themes, and threads worth feeling forward."
     })
   ];
 
   if (input.existingMonthly) {
     sections.push(
       "",
-      "已有月记（需与新周记合并刷新）：",
+      "Existing monthly impression (merge and refresh with the new weekly reflections):",
       `- ${input.existingMonthly.title}\n  ${input.existingMonthly.summary}`,
       "",
-      "新增周记：",
-      weekLines || "(无周记内容)"
+      "New weekly reflections:",
+      weekLines || "(no weekly reflections)"
     );
   } else {
-    sections.push("", "本月周记：", weekLines || "(无周记内容)");
+    sections.push("", "Weekly reflections this month:", weekLines || "(no weekly reflections)");
   }
 
   return sections.join("\n");

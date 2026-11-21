@@ -34,7 +34,7 @@ function stageInput(count: number) {
   return { namespace: "default", dateLabel: DATE, startIso: `${DATE}T00:00:00.000Z`, endIso: "2026-09-19T00:00:00.000Z",
     messages: messages(count), existingMemories: [], hasMore: false };
 }
-function isDigest(input: any) { return String(input.messages?.[0]?.content).includes("不要输出思考过程"); }
+function isDigest(input: any) { return String(input.messages?.[0]?.content).includes("no reasoning"); }
 function seedMessages(sqlite: DatabaseSync, rows: MessageRecord[]) {
   for (const row of rows) sqlite.prepare("INSERT INTO messages (id, conversation_id, namespace, role, content, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
     .run(row.id, row.conversation_id, row.namespace, row.role, row.content, row.source, row.created_at);
@@ -254,8 +254,8 @@ test("the digest prompt's output example is a format placeholder, not a sentence
   const prompt = buildDigestPrompt({ ...stageInput(2), existingMemories: [], speakers: null });
   assert.doesNotMatch(prompt, /这次 dream 合并了重复记忆/);
   assert.doesNotMatch(prompt, /"title":"夜间整理"/);
-  assert.match(prompt, /"title":"<12 字以内标题>"/);
-  assert.match(prompt, /不是示例内容，不要照抄/);
+  assert.match(prompt, /"title":"<short title>"/);
+  assert.match(prompt, /placeholders, never copy them verbatim/);
 });
 
 test("background calls through AI Gateway send no temperature: newer Claude models refuse the request when one is set", async (t) => {

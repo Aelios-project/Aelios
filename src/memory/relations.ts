@@ -253,14 +253,14 @@ async function judgeRelationsForPair(
   if (input.neighbors.length === 0) return [];
   const model = readDreamModel(env);
   const prompt = [
-    "你是记忆关系判定器。给定一条源记忆和若干邻居记忆，判断是否存在关系。",
-    "只输出 JSON 数组，不要 markdown。每项: {\"dst_id\":\"...\",\"rel_type\":\"...\"}",
-    "rel_type 只允许: supports, contradicts, cause_effect, derived_from, same_thread, supersedes。",
-    "没有关系就输出 []。不要发明 id。",
+    "You are a memory relation classifier. Given a source memory and candidate neighbor memories, identify any meaningful semantic relations.",
+    "Output a JSON array only, with no markdown fences. Each item: {\"dst_id\":\"...\",\"rel_type\":\"...\"}",
+    "Allowed rel_type values: supports, contradicts, cause_effect, derived_from, same_thread, supersedes.",
+    "Output [] if no relation holds. Never invent IDs.",
     "",
-    `源记忆 id=${input.src.id}: ${input.src.content.slice(0, 400)}`,
+    `Source memory id=${input.src.id}: ${input.src.content.slice(0, 400)}`,
     "",
-    "邻居:",
+    "Neighbors:",
     ...input.neighbors.map((n, i) => `${i + 1}. id=${n.id}: ${n.content.slice(0, 300)}`)
   ].join("\n");
 
@@ -439,9 +439,9 @@ async function judgeSemanticConflict(
 ): Promise<boolean> {
   const model = readDreamModel(env);
   const prompt = [
-    "你是记忆冲突审核器。判断两条记忆是否语义矛盾（不能同时为真）。",
-    "高相似或同主题不等于冲突；只有事实对立才算 contradicts。",
-    '只输出 JSON 对象，不要 markdown：{"contradicts": true} 或 {"contradicts": false}',
+    "You are a memory conflict verifier. Judge whether two memories semantically contradict each other (cannot both be true at the same time).",
+    "High similarity or shared topic is not a conflict; only factual opposition counts as contradicts.",
+    'Output a JSON object only, with no markdown fences: {"contradicts": true} or {"contradicts": false}',
     "",
     `A id=${left.id}: ${left.content.slice(0, 400)}`,
     `B id=${right.id}: ${right.content.slice(0, 400)}`

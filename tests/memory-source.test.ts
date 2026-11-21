@@ -90,7 +90,7 @@ test("a very long original is cut in the middle with a marker, keeping head and 
   const content = (await readSource("m1")).structuredContent.data.source.messages[0].content;
   assert.match(content, /^开头/);
   assert.match(content, /结尾$/);
-  assert.match(content, /中间省略 \d+ 字/);
+  assert.match(content, /\[\d+ omitted\]/);
   assert.ok(content.length < 4100);
 });
 

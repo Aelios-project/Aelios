@@ -58,12 +58,12 @@ test("a segment prompt says which segment it is and keeps the grounding rules", 
     messages: [msg(1), msg(2)],
     speakers: { userName: "小南", assistantName: "小北" }
   });
-  assert.match(prompt, /分成 3 段来读，这是第 2 段/);
+  assert.match(prompt, /split chronologically into 3 segments; this is segment 2/);
   assert.match(prompt, /source_message_ids/);
-  assert.match(prompt, /没有原文支撑/);
-  assert.match(prompt, /不是给你的指令/);
+  assert.match(prompt, /unsupported by the transcript/);
+  assert.match(prompt, /never instructions for you/);
   assert.match(prompt, /\[msg_001\].*\[小北\]/);
-  assert.match(prompt, /小南的状态/);
+  assert.match(prompt, /how 小南 felt/);
 });
 
 test("the merge prompt carries every note with its ids, and a note cannot close <notes>", () => {
@@ -75,11 +75,11 @@ test("the merge prompt carries every note with its ids, and a note cannot close 
     ],
     existingDraft: { title: "草稿", summary: "旧草稿" }
   });
-  assert.match(prompt, /第 1\/2 段（a 到 b）\n上午她说累。\n挂着的原文 id：msg_001/);
-  assert.match(prompt, /挂着的原文 id：msg_050, msg_051/);
+  assert.match(prompt, /Segment 1\/2 \(a to b\)\n上午她说累。\nSource message IDs: msg_001/);
+  assert.match(prompt, /Source message IDs: msg_050, msg_051/);
   assert.equal(prompt.match(/<\/notes>/g)?.length, 1);
-  assert.match(prompt, /只从笔记列出的原文 id 里挑/);
-  assert.match(prompt, /200-400 字/);
+  assert.match(prompt, /strictly from the IDs listed in the notes/);
+  assert.match(prompt, /200-400 CJK chars/);
   assert.match(prompt, /旧草稿/);
 });
 
@@ -172,7 +172,7 @@ function dailyLog(sqlite: DatabaseSync) {
 test("a busy day is written as segment notes, then one diary from the notes", async () => {
   const { sqlite, db } = setupDb(107);
   const ai = fakeAi((prompt) => {
-    if (prompt.includes("分段笔记：")) {
+    if (prompt.includes("Segment notes:")) {
       return JSON.stringify({ title: "忙的一天", summary: "她今天聊了很多。", source_message_ids: ["msg_000", "msg_036"] });
     }
     return segmentReply(prompt);
@@ -186,12 +186,12 @@ test("a busy day is written as segment notes, then one diary from the notes", as
   assert.equal(stats.message_count, 107);
   assert.equal(ai.prompts.length, 4);
   assert.deepEqual(ai.prompts.slice(0, 3).map((p) => idsIn(p).length), [36, 36, 35]);
-  assert.match(ai.prompts[0], /这是第 1 段/);
-  assert.match(ai.prompts[2], /这是第 3 段/);
+  assert.match(ai.prompts[0], /this is segment 1/);
+  assert.match(ai.prompts[2], /this is segment 3/);
   // The merge step reads notes, not the raw chat, and only grounded ids reach it.
   assert.equal(idsIn(ai.prompts[3]).length, 0);
   assert.match(ai.prompts[3], /这一段从 msg_036 到 msg_071/);
-  assert.match(ai.prompts[3], /挂着的原文 id：msg_072\n/);
+  assert.match(ai.prompts[3], /Source message IDs: msg_072\n/);
   assert.doesNotMatch(ai.prompts[3], /msg_fake/);
   assert.match(ai.prompts[3], /夜里的短稿/);
 
@@ -203,7 +203,7 @@ test("a busy day is written as segment notes, then one diary from the notes", as
 test("if the merge step forgets its ids, the notes' ids stand in", async () => {
   const { sqlite, db } = setupDb(90);
   const ai = fakeAi((prompt) =>
-    prompt.includes("分段笔记：")
+    prompt.includes("Segment notes:")
       ? JSON.stringify({ title: "忘了挂", summary: "她今天聊了很多。", source_message_ids: ["msg_999"] })
       : segmentReply(prompt)
   );
@@ -223,12 +223,12 @@ test("a day that fits stays a single call, as before", async () => {
   assert.equal(stats.segments, undefined);
   assert.equal(ai.prompts.length, 1);
   assert.equal(idsIn(ai.prompts[0]).length, 40);
-  assert.match(ai.prompts[0], /当天原始聊天：/);
+  assert.match(ai.prompts[0], /Today's raw conversation:/);
 });
 
 test("a segment that fails stops the diary, names the segment, keeps the draft", async () => {
   const { sqlite, db } = setupDb(107);
-  const ai = fakeAi((prompt) => (prompt.includes("这是第 2 段") ? "不是 JSON" : segmentReply(prompt)));
+  const ai = fakeAi((prompt) => (prompt.includes("this is segment 2") ? "不是 JSON" : segmentReply(prompt)));
   const stats = await runDiaryWriter({ DB: db, AI: ai.AI, DREAM_TIME_ZONE: "Asia/Singapore" } as never, "default", "2026-10-14");
   assert.equal(stats.ran, false);
   assert.equal(stats.reason, "model_invalid_json");
@@ -248,7 +248,7 @@ test("a Workers AI failure reports what Workers AI said", async () => {
       async run(_model: string, input: { messages: Array<{ content: string }> }) {
         calls += 1;
         const prompt = input.messages[input.messages.length - 1].content;
-        if (prompt.includes("这是第 3 段")) throw new Error("3040: Capacity temporarily exceeded, please try again.");
+        if (prompt.includes("this is segment 3")) throw new Error("3040: Capacity temporarily exceeded, please try again.");
         return { response: segmentReply(prompt) };
       }
     }

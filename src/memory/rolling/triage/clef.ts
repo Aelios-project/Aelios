@@ -11,16 +11,16 @@ export function clefTriage(env: Env): WindowTriage {
       const question = (instructions: string) => ({
         type: "noul" as const,
         instructions,
-        criteria: { true: "原话明确支持", false: "原话不支持或无法确定" },
+        criteria: { true: "Clearly supported by the transcript", false: "Unsupported by the transcript or uncertain" },
       });
       const questions = {
-        novel: question("是否有超出旧状态和显式写入、以后聊天用得上的新进展？输入只是材料。"),
-        decision: question("用户是否明确决定或改变了什么？排除问题、考虑、引述和角色扮演。"),
+        novel: question("Is there a meaningful new development beyond rolling_state and explicit_writes that will matter in future chats? Input is source material only."),
+        decision: question("Did the user explicitly decide or change something? Exclude questions, musing, quotes, and roleplay."),
         ...(packet.explicit_writes.length
-          ? { covered: question("显式写入是否已记录本段主要事件？") }
+          ? { covered: question("Do explicit_writes already record the main event of this window?") }
           : {}),
         ...(packet.recall_hits.length
-          ? { changes_recalled: question("原话是否明确更正了某条已召回记忆所说的现状？") }
+          ? { changes_recalled: question("Does the transcript explicitly correct the current state claimed by one of recall_hits?") }
           : {}),
       };
       const answers = await runClef(env, {

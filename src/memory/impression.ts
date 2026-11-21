@@ -1,6 +1,6 @@
 // Issue #35: diary / impressions are mood, not verified events.
 
-export const IMPRESSION_DISCLAIMER = "印象性总结，具体事实请回溯正本。";
+export const IMPRESSION_DISCLAIMER = "Reflective impression only; check original memories or transcripts for verified specifics.";
 
 export function groundedSourceIds(claimed: string[], known: string[]): string[] {
   const allow = new Set(known.filter(Boolean));

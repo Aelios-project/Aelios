@@ -32,7 +32,7 @@ function captureNightly(env: Env, seen: string[]) {
   env.AI = { async run(_model: string, request: { messages?: Array<{ content: string }> }) {
     const [system, body] = request.messages ?? [];
     if (!system) return { data: [[1, 0]] };
-    if (system.content.includes("不要输出思考过程")) return { response: digest };
+    if (system.content.includes("no reasoning")) return { response: digest };
     seen.push(body.content);
     return { response: { memories: [] } };
   } } as Env["AI"];
@@ -72,7 +72,7 @@ test("P2-e off → on → off → on in the same day extracts each message exact
   off.AI = { async run(_model: string, request: { messages?: Array<{ content: string }> }) {
     const [system, body] = request.messages ?? [];
     if (!system) return { data: [[1, 0]] };
-    if (system.content.includes("不要输出思考过程")) return { response: digest };
+    if (system.content.includes("no reasoning")) return { response: digest };
     for (const match of body.content.matchAll(/\[(msg_\d+)\]/g)) extracted.push(match[1]);
     return { response: { memories: [] } };
   } } as Env["AI"];
@@ -190,7 +190,7 @@ test("an expired nightly inference cannot write candidates after live rolling ta
   const paused = new Promise<void>(resolve => { release = resolve; });
   const off = { ...env, ROLLING_DREAM: "off" };
   off.AI = { async run(_model: string, input: { messages: Array<{ content: string }> }) {
-    if (input.messages[0].content.includes("不要输出思考过程")) {
+    if (input.messages[0].content.includes("no reasoning")) {
       entered();
       await paused;
       return { response: digest };
